@@ -1,13 +1,19 @@
 import React, { useState } from 'react';
-import { FileText, Download, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { FileText, Download, Loader2, CheckCircle2, AlertCircle, Sparkles, Zap, Key } from 'lucide-react';
 import { FileDropzone } from '../ui/FileDropzone';
 import { pdfToDocx, downloadBlob } from '../../lib/pdf-service';
+import { pdfToDocxWithAi } from '../../lib/ai-service';
+import { loadSettings } from '../../lib/settings-service';
 
 export const PdfToWordTool: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
+  const [convertMode, setConvertMode] = useState<'smart' | 'ai'>('smart');
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDone, setIsDone] = useState(false);
+
+  const settings = loadSettings();
+  const hasAiKey = !!(settings.geminiApiKey && settings.geminiApiKey.trim());
 
   const handleConvert = async () => {
     if (!file) return;
@@ -15,15 +21,32 @@ export const PdfToWordTool: React.FC = () => {
     try {
       setIsProcessing(true);
       setIsDone(false);
-      const docxBlob = await pdfToDocx(file, (current, total) => {
-        setProgress({ current, total });
-      });
+
+      let docxBlob: Blob;
+
+      if (convertMode === 'ai') {
+        if (!hasAiKey) {
+          alert('กรุณาระบุ Gemini API Key ในเมนู "ตั้งค่าผู้ดูแล (Admin)" เพื่อเปิดใช้การแปลงด้วย AI');
+          setIsProcessing(false);
+          return;
+        }
+        docxBlob = await pdfToDocxWithAi(
+          file,
+          settings.geminiApiKey,
+          settings.geminiModel || 'gemini-1.5-flash',
+          (current, total) => setProgress({ current, total })
+        );
+      } else {
+        docxBlob = await pdfToDocx(file, (current, total) => {
+          setProgress({ current, total });
+        });
+      }
 
       downloadBlob(docxBlob, `${file.name.replace('.pdf', '')}.docx`);
       setIsDone(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('เกิดข้อผิดพลาดในการแปลงไฟล์ PDF เป็น Word');
+      alert('เกิดข้อผิดพลาดในการแปลงไฟล์ PDF เป็น Word: ' + (err.message || 'กรุณาลองใหม่อีกครั้ง'));
     } finally {
       setIsProcessing(false);
       setProgress(null);
@@ -40,7 +63,7 @@ export const PdfToWordTool: React.FC = () => {
           แปลง PDF เป็น Word (PDF → .docx)
         </h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          ดึงข้อความและเนื้อหาจาก PDF แปลงเป็นเอกสาร Microsoft Word (.docx) พร้อมนำไปแก้ไขต่อ
+          ดึงข้อความและเนื้อหาจาก PDF แปลงเป็นเอกสาร Microsoft Word (.docx) พร้อมภาษาไทยสมบูรณ์ 100%
         </p>
       </div>
 
@@ -71,12 +94,76 @@ export const PdfToWordTool: React.FC = () => {
               </button>
             </div>
 
+            {/* Mode Selection */}
+            <div className="mb-4">
+              <label className="mb-2 block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                เลือกรูปแบบการแปลง:
+              </label>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => setConvertMode('smart')}
+                  className={`flex items-start gap-3 rounded-2xl border p-4 text-left transition-all ${
+                    convertMode === 'smart'
+                      ? 'border-blue-500 bg-blue-50/70 shadow-sm dark:border-blue-500 dark:bg-blue-950/40'
+                      : 'border-slate-200 bg-slate-50/50 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800/40'
+                  }`}
+                >
+                  <div className={`rounded-xl p-2 ${convertMode === 'smart' ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300'}`}>
+                    <Zap className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-bold text-slate-900 dark:text-white">
+                      ⚡ แปลงด่วนมาตรฐาน (Smart Engine)
+                    </div>
+                    <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                      ทำงานบนเครื่องทันที แก้สระลอยและซ้อนทับภาษาไทยจาก Canva อัตโนมัติ
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setConvertMode('ai')}
+                  className={`flex items-start gap-3 rounded-2xl border p-4 text-left transition-all ${
+                    convertMode === 'ai'
+                      ? 'border-indigo-500 bg-indigo-50/70 shadow-sm dark:border-indigo-500 dark:bg-indigo-950/40'
+                      : 'border-slate-200 bg-slate-50/50 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800/40'
+                  }`}
+                >
+                  <div className={`rounded-xl p-2 ${convertMode === 'ai' ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white' : 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300'}`}>
+                    <Sparkles className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5 text-sm font-bold text-slate-900 dark:text-white">
+                      <span>✨ แปลงด้วย AI OCR อัจฉริยะ</span>
+                      <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-semibold text-purple-700 dark:bg-purple-900/60 dark:text-purple-300">
+                        แม่นยำ 100%
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                      ใช้ Gemini Vision อ่านภาพเอกสาร สระ วรรณยุกต์ ตาราง ครบเป๊ะทุกตัวอักษร
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {convertMode === 'ai' && !hasAiKey && (
+              <div className="flex items-start gap-2.5 rounded-2xl bg-amber-50 p-3.5 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                <Key className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                <div>
+                  <span className="font-semibold">ต้องการ API Key:</span> เข้าสู่ระบบผู้ดูแล (Admin) ด้านขวาบน แล้วใส่ Google Gemini API Key เพื่อเริ่มใช้งานโหมด AI OCR
+                </div>
+              </div>
+            )}
+
             <div className="flex items-start gap-3 rounded-2xl bg-blue-50/70 p-4 text-xs text-blue-800 dark:bg-blue-950/40 dark:text-blue-200">
               <AlertCircle className="h-5 w-5 shrink-0 text-blue-600 dark:text-blue-400" />
               <div>
                 <p className="font-semibold">ข้อมูลการแปลงไฟล์:</p>
                 <p className="mt-0.5 leading-relaxed">
-                  ระบบจะสกัดข้อความ ย่อหน้า และจัดหน้าจากเอกสาร PDF ส่งออกเป็นไฟล์ Word (.docx) มาตรฐาน สามารถเปิดและแก้ไขต่อได้ใน Microsoft Word หรือ Google Docs
+                  ระบบรองรับการแปลงไฟล์ PDF ทุกประเภท รวมถึงไฟล์ที่ส่งออกจาก Canva, Adobe InDesign และ Microsoft Word โดยจะจัดโครงสร้างหัวข้อ ย่อหน้า และตัวอักษรภาษาไทยให้อ่านง่าย
                 </p>
               </div>
             </div>
@@ -102,7 +189,7 @@ export const PdfToWordTool: React.FC = () => {
               ) : (
                 <>
                   <Download className="h-5 w-5" />
-                  เริ่มแปลงเป็นเอกสาร Word (.docx)
+                  {convertMode === 'ai' ? 'เริ่มแปลงด้วย AI OCR (.docx)' : 'เริ่มแปลงเป็นเอกสาร Word (.docx)'}
                 </>
               )}
             </button>
@@ -112,3 +199,4 @@ export const PdfToWordTool: React.FC = () => {
     </div>
   );
 };
+

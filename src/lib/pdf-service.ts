@@ -293,10 +293,76 @@ export async function addSignatureToPdf(
   return new Blob([bytes as any], { type: 'application/pdf' });
 }
 
+/**
+ * Map Thai Private Use Area (PUA) codepoints to standard Thai Unicode
+ * Fixes missing / boxed characters in PDFs created with custom font engines (Canva, MacThai, DSN, etc.)
+ */
+export function normalizeThaiPua(text: string): string {
+  if (!text) return '';
+  return text
+    // Windows-874 / MacThai / Adobe Thai PUA character mappings (F700-F71A)
+    .replace(/\uF700/g, '\u0E1E') // พ
+    .replace(/\uF701/g, '\u0E35') // สระอี (บน ป, ฝ, ฟ)
+    .replace(/\uF702/g, '\u0E36') // สระอึ (บน ป, ฝ, ฟ)
+    .replace(/\uF703/g, '\u0E37') // สระอือ (บน ป, ฝ, ฟ)
+    .replace(/\uF704/g, '\u0E4D') // นิคหิต
+    .replace(/\uF705/g, '\u0E48') // ไม้เอก (บน สระบน)
+    .replace(/\uF706/g, '\u0E49') // ไม้โท (บน สระบน)
+    .replace(/\uF707/g, '\u0E4A') // ไม้ตรี (บน สระบน)
+    .replace(/\uF708/g, '\u0E4B') // ไม้จัตวา (บน สระบน)
+    .replace(/\uF709/g, '\u0E4C') // การันต์ (บน สระบน)
+    .replace(/\uF70A/g, '\u0E48') // ไม้เอก (บน ป, ฝ, ฟ)
+    .replace(/\uF70B/g, '\u0E49') // ไม้โท (บน ป, ฝ, ฟ)
+    .replace(/\uF70C/g, '\u0E4A') // ไม้ตรี (บน ป, ฝ, ฟ)
+    .replace(/\uF70D/g, '\u0E4B') // ไม้จัตวา (บน ป, ฝ, ฟ)
+    .replace(/\uF70E/g, '\u0E4C') // การันต์ (บน ป, ฝ, ฟ)
+    .replace(/\uF70F/g, '\u0E31') // ไม้หันอากาศ (บน ป, ฝ, ฟ)
+    .replace(/\uF710/g, '\u0E31') // ไม้หันอากาศ
+    .replace(/\uF711/g, '\u0E33') // สระอำ
+    .replace(/\uF712/g, '\u0E4D') // นิคหิต
+    .replace(/\uF713/g, '\u0E48') // ไม้เอก
+    .replace(/\uF714/g, '\u0E49') // ไม้โท
+    .replace(/\uF715/g, '\u0E4A') // ไม้ตรี
+    .replace(/\uF716/g, '\u0E4B') // ไม้จัตวา
+    .replace(/\uF717/g, '\u0E4C') // การันต์
+    .replace(/\uF718/g, '\u0E38') // สระอุ (ล่าง ฎ, ฏ)
+    .replace(/\uF719/g, '\u0E39') // สระอู (ล่าง ฎ, ฏ)
+    .replace(/\uF71A/g, '\u0E3A') // พินทุ
+    // Additional PUA mappings for Thai fonts (F880-F89E)
+    .replace(/\uF884/g, '\u0E34') // สระอิ
+    .replace(/\uF885/g, '\u0E35') // สระอี
+    .replace(/\uF886/g, '\u0E36') // สระอึ
+    .replace(/\uF887/g, '\u0E37') // สระอือ
+    .replace(/\uF888/g, '\u0E48') // ไม้เอก
+    .replace(/\uF889/g, '\u0E49') // ไม้โท
+    .replace(/\uF88A/g, '\u0E4A') // ไม้ตรี
+    .replace(/\uF88B/g, '\u0E4B') // ไม้จัตวา
+    .replace(/\uF88C/g, '\u0E4C') // การันต์
+    .replace(/\uF88E/g, '\u0E48') // ไม้เอก
+    .replace(/\uF88F/g, '\u0E49') // ไม้โท
+    .replace(/\uF890/g, '\u0E4A') // ไม้ตรี
+    .replace(/\uF891/g, '\u0E4B') // ไม้จัตวา
+    .replace(/\uF892/g, '\u0E4C') // การันต์
+    .replace(/\uF893/g, '\u0E31') // ไม้หันอากาศ
+    .replace(/\uF894/g, '\u0E47') // ไม้ไต่คู้ (เช่น เป็น, เป็ด)
+    .replace(/\uF895/g, '\u0E47') // ไม้ไต่คู้
+    .replace(/\uF896/g, '\u0E38') // สระอุ
+    .replace(/\uF897/g, '\u0E39') // สระอู
+    .replace(/\uF898/g, '\u0E3A') // พินทุ
+    .replace(/\uF899/g, '\u0E48') // ไม้เอก
+    .replace(/\uF89A/g, '\u0E49') // ไม้โท
+    .replace(/\uF89B/g, '\u0E4A') // ไม้ตรี
+    .replace(/\uF89C/g, '\u0E4B') // ไม้จัตวา
+    .replace(/\uF89D/g, '\u0E4C') // การันต์
+    // Remove zero-width formatting characters
+    .replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
+}
+
 function sanitizeXmlText(str: string): string {
   if (!str) return '';
+  const normalized = normalizeThaiPua(str);
   // Remove control characters illegal in XML 1.0 (OpenXML)
-  return str
+  return normalized
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x84\x86-\x9F\uFFFE\uFFFF]/g, '')
     .trim();
 }
@@ -334,15 +400,15 @@ export async function pdfToDocx(
 
     let hasAnyText = false;
 
-    // Collect all text items first
+    // Collect and sanitize raw items
     type TextItem = { str: string; x: number; y: number; w: number; h: number };
-    const allItems: TextItem[] = [];
+    const rawItems: TextItem[] = [];
 
     for (const item of textContent.items as any[]) {
       if ('str' in item && typeof item.str === 'string') {
         const cleanStr = sanitizeXmlText(item.str);
         if (!cleanStr) continue;
-        allItems.push({
+        rawItems.push({
           str: cleanStr,
           x: item.transform[4],
           y: item.transform[5],
@@ -352,32 +418,48 @@ export async function pdfToDocx(
       }
     }
 
+    // Filter out Canva shadow/duplicate layers (items at nearly identical coordinates with same text)
+    const allItems: TextItem[] = [];
+    for (const item of rawItems) {
+      const isDuplicate = allItems.some(
+        (existing) =>
+          existing.str === item.str &&
+          Math.abs(existing.x - item.x) <= Math.max(existing.h * 0.4, 5) &&
+          Math.abs(existing.y - item.y) <= Math.max(existing.h * 0.4, 5)
+      );
+      if (!isDuplicate) {
+        allItems.push(item);
+      }
+    }
+
     if (allItems.length === 0) {
       hasAnyText = false;
     } else {
       hasAnyText = true;
 
-      // Group items into lines by Y position (within 2pt tolerance)
-      const lines: TextItem[][] = [];
+      // Group items into lines by Y position (within 3pt tolerance)
+      const lines: { y: number; items: TextItem[] }[] = [];
       for (const item of allItems) {
         let placed = false;
         for (const line of lines) {
-          if (Math.abs(line[0].y - item.y) <= 2) {
-            line.push(item);
+          if (Math.abs(line.y - item.y) <= 3) {
+            line.items.push(item);
             placed = true;
             break;
           }
         }
-        if (!placed) lines.push([item]);
+        if (!placed) lines.push({ y: item.y, items: [item] });
       }
 
       // Sort lines top-to-bottom (PDF Y is bottom-up, so descending Y = top-to-bottom)
-      lines.sort((a, b) => b[0].y - a[0].y);
+      lines.sort((a, b) => b.y - a.y);
 
       // Helper: does string contain Thai characters?
       const isThai = (s: string) => /[\u0E00-\u0E7F]/.test(s);
+      let lastRenderedLine = '';
 
-      for (const line of lines) {
+      for (const lineObj of lines) {
+        const line = lineObj.items;
         // Sort items left-to-right by X
         line.sort((a, b) => a.x - b.x);
 
@@ -390,16 +472,15 @@ export async function pdfToDocx(
             lineText = item.str;
           } else {
             const gap = item.x - (prevEndX ?? item.x);
-            const lineHasThai = isThai(lineText) || isThai(item.str);
+            const lineHasThai = isThai(lineText.slice(-3)) || isThai(item.str.slice(0, 3));
 
             if (lineHasThai) {
-              // Thai: NEVER add space based on gap — Thai language has no inter-character spaces
-              // Only add a space if the gap is extremely large (e.g. tab-like gap > 3x font height)
-              lineText += gap > prevH * 3 ? ' ' : '';
+              // Thai: join without space unless intentional wide gap (e.g. columns > 2.5x font height)
+              lineText += gap > prevH * 2.5 ? ' ' : '';
               lineText += item.str;
             } else {
-              // Non-Thai: add space when gap is meaningful (> 40% of font height)
-              lineText += gap > prevH * 0.4 ? ' ' : '';
+              // Non-Thai: add space when gap > 35% font height
+              lineText += gap > prevH * 0.35 ? ' ' : '';
               lineText += item.str;
             }
           }
@@ -407,13 +488,20 @@ export async function pdfToDocx(
           prevH = item.h;
         }
 
-        if (lineText.trim()) {
+        const cleanLine = lineText.trim();
+        if (cleanLine) {
+          // Discard immediate duplicate lines (e.g. whole-line shadows offset on separate Y levels)
+          if (cleanLine === lastRenderedLine) {
+            continue;
+          }
+          lastRenderedLine = cleanLine;
+
           docParagraphs.push(
             new Paragraph({
               children: [
                 new TextRun({
-                  text: sanitizeXmlText(lineText),
-                  size: 24,
+                  text: sanitizeXmlText(cleanLine),
+                  size: 24, // 12pt
                   font: 'Angsana New',
                 }),
               ],

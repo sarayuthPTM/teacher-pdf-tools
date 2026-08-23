@@ -111,6 +111,176 @@ export async function callGeminiApi(
   throw new Error(`เกิดข้อผิดพลาดจาก Gemini AI: ${lastErrorMsg}`);
 }
 
+// Call Google Gemini Vision API (multimodal image OCR)
+export async function callGeminiVisionApi(
+  prompt: string,
+  base64Image: string,
+  mimeType = 'image/jpeg',
+  systemInstruction?: string,
+  apiKey?: string,
+  preferredModel = 'gemini-1.5-flash'
+): Promise<string> {
+  if (!apiKey || !apiKey.trim()) {
+    throw new Error('ยังไม่ได้กำหนด Gemini API Key กรุณาไปที่เมนูตั้งค่าผู้ดูแล (Admin) เพื่อใส่ API Key');
+  }
+
+  const modelCandidates = [
+    preferredModel,
+    'gemini-1.5-flash',
+    'gemini-2.0-flash',
+    'gemini-2.5-flash',
+    'gemini-3.5-flash',
+  ].filter((m, idx, self) => m && self.indexOf(m) === idx);
+
+  let lastErrorMsg = '';
+
+  for (const model of modelCandidates) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`;
+
+    const requestBody: any = {
+      contents: [
+        {
+          parts: [
+            {
+              inlineData: {
+                mimeType,
+                data: base64Image,
+              },
+            },
+            { text: prompt },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.1,
+        topK: 32,
+        topP: 0.95,
+        maxOutputTokens: 8192,
+      },
+    };
+
+    if (systemInstruction) {
+      requestBody.systemInstruction = {
+        parts: [{ text: systemInstruction }],
+      };
+    }
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorMsg = errorData?.error?.message || `HTTP ${response.status}: ${response.statusText}`;
+        lastErrorMsg = errorMsg;
+        if (response.status === 404 || errorMsg.includes('not found')) {
+          continue;
+        }
+        throw new Error(errorMsg);
+      }
+
+      const data = await response.json();
+      const candidate = data.candidates?.[0];
+      if (!candidate || !candidate.content?.parts?.[0]?.text) {
+        throw new Error('ไม่พบคำตอบจาก AI');
+      }
+
+      return candidate.content.parts[0].text;
+    } catch (err: any) {
+      lastErrorMsg = err.message || String(err);
+      console.warn(`Error with vision ${model}:`, err);
+    }
+  }
+
+  throw new Error(`เกิดข้อผิดพลาดจาก Gemini AI Vision: ${lastErrorMsg}`);
+}
+
+/**
+ * Convert PDF to Word using Google Gemini AI OCR (for complex Canva graphic PDFs, scans, charts)
+ */
+export async function pdfToDocxWithAi(
+  file: File,
+  apiKey: string,
+  model = 'gemini-1.5-flash',
+  onProgress?: (current: number, total: number) => void
+): Promise<Blob> {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const numPages = pdfDoc.numPages;
+
+  const docParagraphs: Paragraph[] = [
+    new Paragraph({
+      text: `เอกสารแปลงจาก PDF (ประมวลผลด้วย AI): ${file.name.replace('.pdf', '')}`,
+      heading: HeadingLevel.TITLE,
+      spacing: { after: 300 },
+    }),
+  ];
+
+  for (let i = 1; i <= numPages; i++) {
+    const page = await pdfDoc.getPage(i);
+    const viewport = page.getViewport({ scale: 2.0 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d');
+
+    if (ctx) {
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      const base64Data = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+
+      const prompt = `กรุณาอ่านและถอดข้อความทั้งหมดในภาพเอกสารหน้านี้อย่างละเอียด ถูกต้องตามหลักภาษาไทย 100% (ตรวจทานสระ วรรณยุกต์ และตัวสะกดให้ถูกต้อง)
+รักษาโครงสร้างหัวข้อ ย่อหน้า และเนื้อหาทั้งหมด ห้ามตัดทอนข้อความใดๆ`;
+
+      const systemInstruction = `คุณคือระบบ OCR แปลงเอกสารเป็นข้อความภาษาไทยและสากล ตอบเฉพาะเนื้อหาข้อความที่อ่านได้จากภาพ โดยแบ่งบรรทัดและย่อหน้าให้อ่านง่ายเป็นธรรมชาติ`;
+
+      const textResponse = await callGeminiVisionApi(prompt, base64Data, 'image/jpeg', systemInstruction, apiKey, model);
+
+      docParagraphs.push(
+        new Paragraph({
+          text: `--- หน้า ${i} จาก ${numPages} ---`,
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 250, after: 120 },
+        })
+      );
+
+      const lines = textResponse.split('\n');
+      for (const line of lines) {
+        const clean = line.replace(/[*#]/g, '').trim();
+        if (clean) {
+          docParagraphs.push(
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: clean,
+                  size: 28, // 14pt
+                  font: 'TH Sarabun PSK',
+                }),
+              ],
+              spacing: { after: 100 },
+            })
+          );
+        }
+      }
+    }
+
+    if (onProgress) onProgress(i, numPages);
+  }
+
+  const doc = new Document({
+    creator: 'เครื่องมือสำหรับครู (PDF AI Tools)',
+    title: file.name,
+    sections: [{ children: docParagraphs }],
+  });
+
+  const blob = await Packer.toBlob(doc);
+  return new Blob([blob], {
+    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  });
+}
+
 // 1. AI Summarize Document
 export async function summarizePdf(
   pdfText: string,
