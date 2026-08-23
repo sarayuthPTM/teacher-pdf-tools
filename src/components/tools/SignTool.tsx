@@ -1,6 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import SignaturePad from 'signature_pad';
-import { PenTool, Download, Trash2, Upload, Loader2, Check, RefreshCw } from 'lucide-react';
+import { PenTool, Download, Trash2, Upload, Loader2, Check, RefreshCw, Move, Maximize2 } from 'lucide-react';
 import { FileDropzone } from '../ui/FileDropzone';
 import { renderPdfThumbnails, addSignatureToPdf, downloadBlob } from '../../lib/pdf-service';
 import { PDFDocument } from 'pdf-lib';
@@ -15,10 +15,13 @@ export const SignTool: React.FC = () => {
   const [signatureImage, setSignatureImage] = useState<string | null>(null);
   const [selectedPage, setSelectedPage] = useState<number>(1);
   const [sigPosition, setSigPosition] = useState<{ xPercent: number; yPercent: number }>({ xPercent: 50, yPercent: 80 });
-  const [sigSize, setSigSize] = useState<number>(120);
+  const [sigSize, setSigSize] = useState<number>(140);
+  const [isDragging, setIsDragging] = useState(false);
 
   const sigCanvasRef = useRef<HTMLCanvasElement>(null);
   const sigPadInstance = useRef<SignaturePad | null>(null);
+  const pageContainerRef = useRef<HTMLDivElement>(null);
+  const dragStartRef = useRef<{ mouseX: number; mouseY: number; startXPercent: number; startYPercent: number } | null>(null);
 
   useEffect(() => {
     if (sigCanvasRef.current) {
@@ -72,21 +75,82 @@ export const SignTool: React.FC = () => {
   };
 
   const handlePageClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
+    if (isDragging) return;
+    if (!pageContainerRef.current) return;
+    const rect = pageContainerRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     setSigPosition({
-      xPercent: (x / rect.width) * 100,
-      yPercent: (y / rect.height) * 100,
+      xPercent: Math.max(5, Math.min(95, (x / rect.width) * 100)),
+      yPercent: Math.max(5, Math.min(95, (y / rect.height) * 100)),
     });
   };
+
+  // Dragging Handlers for Mouse and Touch
+  const handleDragStart = (e: React.MouseEvent | React.TouchEvent) => {
+    e.stopPropagation();
+    setIsDragging(true);
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    dragStartRef.current = {
+      mouseX: clientX,
+      mouseY: clientY,
+      startXPercent: sigPosition.xPercent,
+      startYPercent: sigPosition.yPercent,
+    };
+  };
+
+  const handleDragMove = useCallback((e: MouseEvent | TouchEvent) => {
+    if (!dragStartRef.current || !pageContainerRef.current) return;
+    const rect = pageContainerRef.current.getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+
+    const deltaX = clientX - dragStartRef.current.mouseX;
+    const deltaY = clientY - dragStartRef.current.mouseY;
+
+    const deltaXPercent = (deltaX / rect.width) * 100;
+    const deltaYPercent = (deltaY / rect.height) * 100;
+
+    const newXPercent = Math.max(5, Math.min(95, dragStartRef.current.startXPercent + deltaXPercent));
+    const newYPercent = Math.max(5, Math.min(95, dragStartRef.current.startYPercent + deltaYPercent));
+
+    setSigPosition({
+      xPercent: newXPercent,
+      yPercent: newYPercent,
+    });
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    dragStartRef.current = null;
+    setTimeout(() => setIsDragging(false), 50);
+  }, []);
+
+  useEffect(() => {
+    if (isDragging) {
+      window.addEventListener('mousemove', handleDragMove);
+      window.addEventListener('mouseup', handleDragEnd);
+      window.addEventListener('touchmove', handleDragMove, { passive: false });
+      window.addEventListener('touchend', handleDragEnd);
+    } else {
+      window.removeEventListener('mousemove', handleDragMove);
+      window.removeEventListener('mouseup', handleDragEnd);
+      window.removeEventListener('touchmove', handleDragMove);
+      window.removeEventListener('touchend', handleDragEnd);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleDragMove);
+      window.removeEventListener('mouseup', handleDragEnd);
+      window.removeEventListener('touchmove', handleDragMove);
+      window.removeEventListener('touchend', handleDragEnd);
+    };
+  }, [isDragging, handleDragMove, handleDragEnd]);
 
   const handleApplySignature = async () => {
     if (!file || !signatureImage) return;
 
     try {
       setIsProcessing(true);
-      // Load actual PDF dimensions to calculate correct points
       const arrayBuffer = await file.arrayBuffer();
       const pdfDoc = await PDFDocument.load(arrayBuffer);
       const page = pdfDoc.getPages()[selectedPage - 1];
@@ -96,7 +160,6 @@ export const SignTool: React.FC = () => {
       const heightInPoints = sigSize * 0.5; // aspect ratio 2:1
 
       const xPoint = (sigPosition.xPercent / 100) * pdfWidth - widthInPoints / 2;
-      // In PDF coordinate system, Y starts from bottom
       const yPoint = pdfHeight - (sigPosition.yPercent / 100) * pdfHeight - heightInPoints / 2;
 
       const signedBlob = await addSignatureToPdf(
@@ -132,7 +195,7 @@ export const SignTool: React.FC = () => {
           เซ็นเอกสาร PDF (Sign PDF)
         </h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          วาดลายเซ็น อัปโหลดรูปภาพ แล้วคลิกวางตำแหน่งบนหน้าเอกสารได้ทันที
+          วาดหรืออัปโหลดลายเซ็น แล้วลากวางปรับตำแหน่งได้อย่างอิสระบนหน้าเอกสาร
         </p>
       </div>
 
@@ -213,7 +276,7 @@ export const SignTool: React.FC = () => {
                     <select
                       value={selectedPage}
                       onChange={(e) => setSelectedPage(Number(e.target.value))}
-                      className="w-full rounded-xl border border-slate-300 bg-slate-50 p-2.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                      className="w-full rounded-xl border border-slate-300 bg-slate-50 p-2.5 text-xs font-semibold dark:border-slate-700 dark:bg-slate-800"
                     >
                       {thumbnails.map((t) => (
                         <option key={t.pageNumber} value={t.pageNumber}>
@@ -224,22 +287,28 @@ export const SignTool: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
-                      ขนาดลายเซ็น: {sigSize}px
-                    </label>
+                    <div className="flex items-center justify-between text-xs font-medium text-slate-600 dark:text-slate-400">
+                      <span>ขนาดลายเซ็น: {sigSize}px</span>
+                      <span className="text-[11px] text-slate-400">พิกัด X: {sigPosition.xPercent.toFixed(0)}%, Y: {sigPosition.yPercent.toFixed(0)}%</span>
+                    </div>
                     <input
                       type="range"
                       min="60"
-                      max="240"
+                      max="280"
                       value={sigSize}
                       onChange={(e) => setSigSize(Number(e.target.value))}
-                      className="w-full accent-emerald-600"
+                      className="mt-1.5 w-full accent-emerald-600"
                     />
                   </div>
 
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    💡 <strong>คำแนะนำ:</strong> คลิกบนหน้ากระดาษฝั่งขวาเพื่อย้ายตำแหน่งลายเซ็นได้ทันที
-                  </p>
+                  <div className="rounded-2xl bg-emerald-50/70 p-3.5 text-xs text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+                    <div className="flex items-center gap-1.5 font-bold">
+                      <Move className="h-4 w-4" /> ลากเลื่อนลายเซ็นได้อิสระ
+                    </div>
+                    <p className="mt-1 text-[11px] leading-relaxed">
+                      กดค้างที่กล่องลายเซ็นบนหน้ากระดาษฝั่งขวา แล้วลากเลื่อนไปยังตำแหน่งที่ต้องการได้ทันที (รองรับทั้งเมาส์และทัชสกรีนมือถือ)
+                    </p>
+                  </div>
                 </div>
               </div>
             )}
@@ -270,7 +339,7 @@ export const SignTool: React.FC = () => {
             <div className="sticky top-24 rounded-3xl border border-slate-200 bg-white p-6 shadow-lift dark:border-slate-800 dark:bg-slate-900">
               <div className="mb-3 flex items-center justify-between">
                 <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
-                  ตัวอย่างหน้า {selectedPage} (คลิกเพื่อวางตำแหน่งลายเซ็น)
+                  ตัวอย่างหน้า {selectedPage} (คลิกหรือลากกล่องลายเซ็นเพื่อย้ายตำแหน่ง)
                 </span>
                 <button
                   type="button"
@@ -287,19 +356,23 @@ export const SignTool: React.FC = () => {
                 </div>
               ) : currentPageThumbnail ? (
                 <div
+                  ref={pageContainerRef}
                   onClick={handlePageClick}
-                  className="relative mx-auto cursor-crosshair overflow-hidden rounded-xl border border-slate-200 bg-slate-100 shadow-md dark:border-slate-700"
-                  style={{ maxWidth: '420px' }}
+                  className="relative mx-auto select-none overflow-hidden rounded-xl border border-slate-200 bg-slate-100 shadow-md dark:border-slate-700"
+                  style={{ maxWidth: '440px' }}
                 >
                   <img
                     src={currentPageThumbnail.dataUrl}
                     alt={`Page ${selectedPage}`}
-                    className="w-full select-none"
+                    className="pointer-events-none w-full select-none"
+                    draggable={false}
                   />
 
-                  {/* Placed signature overlay */}
+                  {/* Draggable signature overlay */}
                   {signatureImage && (
                     <div
+                      onMouseDown={handleDragStart}
+                      onTouchStart={handleDragStart}
                       style={{
                         position: 'absolute',
                         left: `${sigPosition.xPercent}%`,
@@ -307,12 +380,22 @@ export const SignTool: React.FC = () => {
                         transform: 'translate(-50%, -50%)',
                         width: `${sigSize}px`,
                       }}
-                      className="pointer-events-none rounded border-2 border-dashed border-emerald-500 bg-emerald-50/20 p-1"
+                      className={`group cursor-grab rounded-lg border-2 border-dashed bg-emerald-50/40 p-1.5 shadow-md transition-shadow active:cursor-grabbing ${
+                        isDragging
+                          ? 'border-emerald-600 ring-2 ring-emerald-400/50 shadow-lg'
+                          : 'border-emerald-500 hover:border-emerald-600'
+                      }`}
                     >
+                      <div className="mb-0.5 flex items-center justify-between rounded bg-emerald-600/90 px-1.5 py-0.5 text-[9px] font-bold text-white shadow-sm">
+                        <span className="flex items-center gap-1">
+                          <Move className="h-2.5 w-2.5" /> ลายเซ็น (ลากได้)
+                        </span>
+                      </div>
                       <img
                         src={signatureImage}
                         alt="Signature"
                         className="w-full object-contain"
+                        draggable={false}
                       />
                     </div>
                   )}

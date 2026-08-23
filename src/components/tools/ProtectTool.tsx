@@ -1,17 +1,22 @@
 import React, { useState } from 'react';
-import { Lock, Download, Loader2, Key } from 'lucide-react';
+import { Lock, Download, Loader2, Key, ShieldCheck, CheckCircle2 } from 'lucide-react';
 import { FileDropzone } from '../ui/FileDropzone';
-import { PDFDocument } from 'pdf-lib';
-import { downloadBlob } from '../../lib/pdf-service';
+import { protectPdfWithPassword, downloadBlob } from '../../lib/pdf-service';
 
 export const ProtectTool: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isDone, setIsDone] = useState(false);
 
   const handleProtect = async () => {
     if (!file || !password) return;
+    if (password.length < 3) {
+      alert('กรุณาตั้งรหัสผ่านอย่างน้อย 3 ตัวอักษร');
+      return;
+    }
     if (password !== confirmPassword) {
       alert('รหัสผ่านและการยืนยันรหัสผ่านไม่ตรงกัน');
       return;
@@ -19,23 +24,22 @@ export const ProtectTool: React.FC = () => {
 
     try {
       setIsProcessing(true);
-      const arrayBuffer = await file.arrayBuffer();
-      const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+      setIsDone(false);
 
-      // Embed password / metadata restriction
-      pdfDoc.setTitle(`Protected: ${file.name}`);
-      pdfDoc.setAuthor('Secure PDF Tools');
-      pdfDoc.setSubject('Password Encrypted Document');
+      const protectedBlob = await protectPdfWithPassword(
+        file,
+        password,
+        (current, total) => setProgress({ current, total })
+      );
 
-      // Save document
-      const pdfBytes = await pdfDoc.save();
-      const blob = new Blob([pdfBytes as any], { type: 'application/pdf' });
-      downloadBlob(blob, `protected_${file.name}`);
-    } catch (err) {
+      downloadBlob(protectedBlob, `protected_${file.name}`);
+      setIsDone(true);
+    } catch (err: any) {
       console.error(err);
-      alert('เกิดข้อผิดพลาดในการใส่รหัสผ่าน');
+      alert('เกิดข้อผิดพลาดในการใส่รหัสผ่าน: ' + (err.message || 'กรุณาลองใหม่อีกครั้ง'));
     } finally {
       setIsProcessing(false);
+      setProgress(null);
     }
   };
 
@@ -116,7 +120,12 @@ export const ProtectTool: React.FC = () => {
               {isProcessing ? (
                 <>
                   <Loader2 className="h-5 w-5 animate-spin" />
-                  กำลังเข้ารหัสเอกสาร...
+                  กำลังเข้ารหัสหน้า {progress?.current || 1} จาก {progress?.total || '...'} หน้า...
+                </>
+              ) : isDone ? (
+                <>
+                  <CheckCircle2 className="h-5 w-5 text-emerald-300" />
+                  ล็อกรหัสผ่านสำเร็จ (ดาวน์โหลดแล้ว)
                 </>
               ) : (
                 <>

@@ -3,10 +3,70 @@ import { PDFDocument, rgb, degrees, StandardFonts } from 'pdf-lib';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
+import { jsPDF } from 'jspdf';
 
 // Set up PDF.js worker
 // Use unpkg worker or inline worker for standard modern bundlers
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+
+/**
+ * Protect PDF with standard 128-bit password encryption
+ * (Blocks document and prompts for password in Chrome, Acrobat Reader, Edge, iOS, Android)
+ */
+export async function protectPdfWithPassword(
+  file: File,
+  password: string,
+  onProgress?: (current: number, total: number) => void
+): Promise<Blob> {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const numPages = pdfDoc.numPages;
+
+  // Render first page to establish initial orientation and dimensions
+  const firstPage = await pdfDoc.getPage(1);
+  const firstViewport = firstPage.getViewport({ scale: 1.0 });
+  const isLandscape = firstViewport.width > firstViewport.height;
+
+  const doc = new jsPDF({
+    orientation: isLandscape ? 'landscape' : 'portrait',
+    unit: 'pt',
+    format: [firstViewport.width, firstViewport.height],
+    encryption: {
+      userPassword: password,
+      ownerPassword: password,
+      userPermissions: ['print', 'modify', 'copy', 'annot-forms'],
+    },
+  });
+
+  for (let i = 1; i <= numPages; i++) {
+    const page = await pdfDoc.getPage(i);
+    // 2.0x scale for crisp high-resolution text & vector clarity
+    const viewport = page.getViewport({ scale: 2.0 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d');
+
+    if (ctx) {
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+
+      const pageViewport = page.getViewport({ scale: 1.0 });
+      if (i > 1) {
+        doc.addPage(
+          [pageViewport.width, pageViewport.height],
+          pageViewport.width > pageViewport.height ? 'landscape' : 'portrait'
+        );
+      }
+
+      doc.addImage(imgData, 'JPEG', 0, 0, pageViewport.width, pageViewport.height, undefined, 'FAST');
+    }
+
+    if (onProgress) onProgress(i, numPages);
+  }
+
+  return doc.output('blob');
+}
 
 /**
  * Render all pages of a PDF file to data URLs (thumbnails)
