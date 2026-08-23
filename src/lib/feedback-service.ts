@@ -1,4 +1,5 @@
 import { FeedbackMessage } from '../types/admin';
+import { loadSettings } from './settings-service';
 
 const FEEDBACK_KEY = 'teacher_tools_feedback_messages';
 
@@ -35,6 +36,28 @@ export function saveFeedbackMessage(
     localStorage.setItem(FEEDBACK_KEY, JSON.stringify(updated));
   } catch (e) {
     console.error('Failed to save feedback:', e);
+  }
+
+  // Send to Google Sheets Messages tab
+  try {
+    const settings = loadSettings();
+    const url = settings.googleSheetsWebhookUrl;
+    if (url && url.trim().startsWith('https://script.google.com/')) {
+      fetch(url.trim(), {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'contact_message',
+          name: newMsg.name,
+          department: newMsg.department || '-',
+          category: newMsg.category,
+          message: newMsg.message,
+        }),
+      }).catch((err) => console.warn('Failed to send contact message to Google Sheets:', err));
+    }
+  } catch (err) {
+    // Ignore network errors
   }
 
   return newMsg;
