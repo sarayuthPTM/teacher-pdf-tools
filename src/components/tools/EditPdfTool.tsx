@@ -19,15 +19,16 @@ import {
   Loader2,
   Check,
   Move,
-  Palette,
+  FileText,
+  HelpCircle,
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
-import { PDFDocument, rgb } from 'pdf-lib';
+import { PDFDocument } from 'pdf-lib';
 import { FileDropzone } from '../ui/FileDropzone';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
-type ToolType = 'select' | 'text' | 'whiteout' | 'pen' | 'highlighter' | 'rect' | 'circle' | 'image';
+type ToolType = 'select' | 'text' | 'whiteout' | 'pen' | 'highlighter' | 'rect' | 'circle';
 
 interface TextItem {
   id: string;
@@ -86,14 +87,14 @@ export const EditPdfTool: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
 
-  // Active Tool State
+  // Active Tool State (Default to Text with Auto-Whiteout Replacement)
   const [activeTool, setActiveTool] = useState<ToolType>('text');
-  const [currentColor, setCurrentColor] = useState<string>('#1e293b');
-  const [currentFontSize, setCurrentFontSize] = useState<number>(18);
+  const [currentColor, setCurrentColor] = useState<string>('#0f172a');
+  const [currentFontSize, setCurrentFontSize] = useState<number>(16);
   const [currentFontFamily, setCurrentFontFamily] = useState<string>('Sarabun');
   const [isBold, setIsBold] = useState<boolean>(false);
   const [strokeWidth, setStrokeWidth] = useState<number>(3);
-  const [bgWhiteout, setBgWhiteout] = useState<boolean>(false);
+  const [bgWhiteout, setBgWhiteout] = useState<boolean>(true); // Default to Auto-Whiteout for direct replacement
 
   // Annotations map per page number
   const [annotations, setAnnotations] = useState<Record<number, PageAnnotations>>({});
@@ -184,25 +185,7 @@ export const EditPdfTool: React.FC = () => {
     ctx.clearRect(0, 0, overlay.width, overlay.height);
     const pageAnn = annotations[currentPage] || { texts: [], shapes: [], drawings: [], images: [] };
 
-    // 1. Draw Drawings (Pen / Highlighter)
-    pageAnn.drawings.forEach((d) => {
-      if (d.points.length < 2) return;
-      ctx.save();
-      ctx.beginPath();
-      ctx.strokeStyle = d.color;
-      ctx.lineWidth = d.strokeWidth * (scale / 1.0);
-      ctx.globalAlpha = d.opacity;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.moveTo(d.points[0].x * scale, d.points[0].y * scale);
-      for (let i = 1; i < d.points.length; i++) {
-        ctx.lineTo(d.points[i].x * scale, d.points[i].y * scale);
-      }
-      ctx.stroke();
-      ctx.restore();
-    });
-
-    // 2. Draw Shapes (Whiteout / Rect / Circle)
+    // 1. Draw Shapes (Whiteout / Rect / Circle)
     pageAnn.shapes.forEach((s) => {
       ctx.save();
       const x = s.x * scale;
@@ -235,6 +218,24 @@ export const EditPdfTool: React.FC = () => {
       ctx.restore();
     });
 
+    // 2. Draw Drawings (Pen / Highlighter)
+    pageAnn.drawings.forEach((d) => {
+      if (d.points.length < 2) return;
+      ctx.save();
+      ctx.beginPath();
+      ctx.strokeStyle = d.color;
+      ctx.lineWidth = d.strokeWidth * (scale / 1.0);
+      ctx.globalAlpha = d.opacity;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.moveTo(d.points[0].x * scale, d.points[0].y * scale);
+      for (let i = 1; i < d.points.length; i++) {
+        ctx.lineTo(d.points[i].x * scale, d.points[i].y * scale);
+      }
+      ctx.stroke();
+      ctx.restore();
+    });
+
     // 3. Draw Images
     pageAnn.images.forEach((imgItem) => {
       const img = new Image();
@@ -256,7 +257,7 @@ export const EditPdfTool: React.FC = () => {
       if (t.bgWhite) {
         const metrics = ctx.measureText(t.text);
         ctx.fillStyle = '#ffffff';
-        ctx.fillRect(t.x * scale - 2, t.y * scale - 2, metrics.width + 4, fontSize + 4);
+        ctx.fillRect(t.x * scale - 3, t.y * scale - 2, metrics.width + 6, fontSize + 4);
         ctx.fillStyle = t.color;
       }
 
@@ -283,12 +284,24 @@ export const EditPdfTool: React.FC = () => {
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const coords = getCanvasCoords(e);
 
+    // Check if clicked near an existing text item to edit it
+    const pageTexts = annotations[currentPage]?.texts || [];
+    const clickedText = pageTexts.find(
+      (t) => Math.abs(t.x - coords.x) < 50 && Math.abs(t.y - coords.y) < 20
+    );
+
+    if (clickedText && activeTool === 'text') {
+      setEditingTextId(clickedText.id);
+      setEditingTextValue(clickedText.text);
+      return;
+    }
+
     if (activeTool === 'text') {
       const newText: TextItem = {
         id: `${Date.now()}`,
         x: coords.x,
         y: coords.y,
-        text: 'พิมพ์ข้อความที่นี่',
+        text: 'พิมพ์ข้อความใหม่ที่นี่',
         fontSize: currentFontSize,
         color: currentColor,
         fontFamily: currentFontFamily,
@@ -308,7 +321,7 @@ export const EditPdfTool: React.FC = () => {
       });
 
       setEditingTextId(newText.id);
-      setEditingTextValue(newText.text);
+      setEditingTextValue('');
       return;
     }
 
@@ -472,13 +485,14 @@ export const EditPdfTool: React.FC = () => {
   // Save text when finished editing
   const saveEditingText = () => {
     if (!editingTextId) return;
+    const finalVal = editingTextValue.trim() || 'ข้อความ';
     setAnnotations((prev) => {
       const cur = prev[currentPage] || { texts: [], shapes: [], drawings: [], images: [] };
       return {
         ...prev,
         [currentPage]: {
           ...cur,
-          texts: cur.texts.map((t) => (t.id === editingTextId ? { ...t, text: editingTextValue } : t)),
+          texts: cur.texts.map((t) => (t.id === editingTextId ? { ...t, text: finalVal } : t)),
         },
       };
     });
@@ -498,7 +512,6 @@ export const EditPdfTool: React.FC = () => {
         const pageAnn = annotations[pNum];
         if (!pageAnn) continue;
 
-        // Render annotations onto offscreen canvas for crisp embedding
         const page = await pdfDoc.getPage(pNum);
         const viewport = page.getViewport({ scale: 2.0 }); // high res
 
@@ -567,11 +580,11 @@ export const EditPdfTool: React.FC = () => {
           if (t.bgWhite) {
             const metrics = ctx.measureText(t.text);
             ctx.fillStyle = '#ffffff';
-            ctx.fillRect(t.x * pScale - 2, t.y * pScale - 2, metrics.width + 4, fontSize + 4);
+            ctx.fillRect(t.x * pScale - 3, t.y * pScale - 2, metrics.width + 6, fontSize + 4);
             ctx.fillStyle = t.color;
           }
 
-          ctx.fillText(t.text, t.x * pScale, t.y * pScale);
+          ctx.fillText(t.text, t.x * pScale, t.y * scale ? t.y * pScale : t.y * 2.0);
           ctx.restore();
         });
 
@@ -607,17 +620,17 @@ export const EditPdfTool: React.FC = () => {
   };
 
   return (
-    <div className="w-full space-y-6">
+    <div className="w-full space-y-4">
       {/* Header */}
       <div className="text-center">
-        <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-indigo-600 to-sky-500 text-white shadow-md">
-          <FileEdit className="h-7 w-7" />
+        <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-indigo-600 to-sky-500 text-white shadow-md">
+          <FileEdit className="h-6 w-6" />
         </div>
         <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white sm:text-3xl">
           แก้ไขไฟล์ PDF (Edit PDF)
         </h2>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          พิมพ์ข้อความ ลบ/ปิดทับข้อความเดิม ขีดเขียน ไฮไลท์ และแทรกรูปภาพลงบนไฟล์ PDF ได้สะดวก 100%
+        <p className="mt-1 text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+          คลิกเพื่อพิมพ์ข้อความแทนที่ของเดิม, ลบ/ปิดทับคำผิด, วาดเขียน, ไฮไลท์ และแทรกรูปภาพ
         </p>
       </div>
 
@@ -632,14 +645,33 @@ export const EditPdfTool: React.FC = () => {
           />
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-3">
+          {/* Quick Guidance Alert */}
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-indigo-200 bg-indigo-50/80 px-4 py-2.5 text-xs text-indigo-900 dark:border-indigo-900/60 dark:bg-indigo-950/40 dark:text-indigo-200">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 shrink-0 text-indigo-600 dark:text-indigo-400" />
+              <span>
+                <strong>วิธีแก้ไขข้อความ:</strong> เลือกเครื่องมือ <strong>"พิมพ์ข้อความ"</strong> แล้วคลิกตรงข้อความเดิมที่ต้องการแก้ (ระบบจะปิดทับคำเดิมและให้พิมพ์ข้อความใหม่แทนที่ทันที)
+              </span>
+            </div>
+            <label className="flex cursor-pointer items-center gap-1.5 font-bold text-indigo-700 dark:text-indigo-300">
+              <input
+                type="checkbox"
+                checked={bgWhiteout}
+                onChange={(e) => setBgWhiteout(e.target.checked)}
+                className="h-4 w-4 rounded accent-indigo-600"
+              />
+              ปิดทับข้อความเดิมอัตโนมัติ (Auto-Whiteout)
+            </label>
+          </div>
+
           {/* Main Editing Toolbar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-white p-4 shadow-soft dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-white p-3.5 shadow-soft dark:border-slate-800 dark:bg-slate-900">
             {/* Tool Selection Buttons */}
             <div className="flex flex-wrap items-center gap-1.5">
               {[
-                { id: 'text' as ToolType, label: 'พิมพ์ข้อความ', icon: Type },
-                { id: 'whiteout' as ToolType, label: 'ลบ/ปิดทับ', icon: Eraser },
+                { id: 'text' as ToolType, label: 'พิมพ์ข้อความ / แทนที่', icon: Type },
+                { id: 'whiteout' as ToolType, label: 'ลบ / ปิดทับคำเดิม', icon: Eraser },
                 { id: 'pen' as ToolType, label: 'ปากกาวาด', icon: PenTool },
                 { id: 'highlighter' as ToolType, label: 'ไฮไลท์', icon: Highlighter },
                 { id: 'rect' as ToolType, label: 'กรอบสี่เหลี่ยม', icon: Square },
@@ -674,29 +706,29 @@ export const EditPdfTool: React.FC = () => {
               </label>
             </div>
 
-            {/* Customizer Sub-Bar (Font size, Color, Whiteout toggle) */}
-            <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3 dark:border-slate-800 lg:border-t-0 lg:pt-0">
+            {/* Customizer Sub-Bar (Font size, Color, Undo) */}
+            <div className="flex flex-wrap items-center gap-2.5 border-t border-slate-100 pt-2.5 dark:border-slate-800 lg:border-t-0 lg:pt-0">
               {/* Color Picker */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <span className="text-xs text-slate-400">สี:</span>
                 <input
                   type="color"
                   value={currentColor}
                   onChange={(e) => setCurrentColor(e.target.value)}
-                  className="h-8 w-8 cursor-pointer rounded-lg border border-slate-200 dark:border-slate-700"
+                  className="h-7 w-7 cursor-pointer rounded-lg border border-slate-200 dark:border-slate-700"
                 />
               </div>
 
-              {/* Font Size (when text tool active) */}
+              {/* Font Size */}
               {activeTool === 'text' && (
-                <div className="flex items-center gap-1.5 text-xs text-slate-700 dark:text-slate-300">
+                <div className="flex items-center gap-1 text-xs text-slate-700 dark:text-slate-300">
                   <span>ขนาด:</span>
                   <select
                     value={currentFontSize}
                     onChange={(e) => setCurrentFontSize(parseInt(e.target.value, 10))}
-                    className="rounded-lg border border-slate-200 bg-slate-50 p-1.5 text-xs dark:border-slate-700 dark:bg-slate-800"
+                    className="rounded-lg border border-slate-200 bg-slate-50 p-1 text-xs font-bold dark:border-slate-700 dark:bg-slate-800"
                   >
-                    {[12, 14, 16, 18, 20, 24, 28, 32, 40, 48].map((size) => (
+                    {[12, 14, 15, 16, 17, 18, 20, 22, 24, 28, 32, 40].map((size) => (
                       <option key={size} value={size}>
                         {size}pt
                       </option>
@@ -710,15 +742,15 @@ export const EditPdfTool: React.FC = () => {
                 <select
                   value={currentFontFamily}
                   onChange={(e) => setCurrentFontFamily(e.target.value)}
-                  className="rounded-lg border border-slate-200 bg-slate-50 p-1.5 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  className="rounded-lg border border-slate-200 bg-slate-50 p-1 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
                 >
-                  <option value="Sarabun">Sarabun (สารบรรณ)</option>
-                  <option value="Prompt">Prompt (พร้อมต์)</option>
-                  <option value="Kanit">Kanit (คณิต)</option>
+                  <option value="Sarabun">สารบรรณ (Sarabun)</option>
+                  <option value="Prompt">พร้อมต์ (Prompt)</option>
+                  <option value="Kanit">คณิต (Kanit)</option>
                 </select>
               )}
 
-              {/* Undo & Clear buttons */}
+              {/* Undo */}
               <button
                 type="button"
                 onClick={handleUndo}
@@ -731,15 +763,15 @@ export const EditPdfTool: React.FC = () => {
               <button
                 type="button"
                 onClick={handleClearPage}
-                className="flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                className="flex items-center gap-1 rounded-xl px-2 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
                 title="ล้างทั้งหมดในหน้านี้"
               >
-                <Trash2 className="h-3.5 w-3.5" /> ล้างหน้านี้
+                <Trash2 className="h-3.5 w-3.5" /> ล้างหน้า
               </button>
             </div>
           </div>
 
-          {/* Page Navigator & Zoom */}
+          {/* Page Navigator & Zoom & Export */}
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center gap-2">
               <button
@@ -794,7 +826,7 @@ export const EditPdfTool: React.FC = () => {
               className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-2 text-xs font-bold text-white shadow-md hover:opacity-95 disabled:opacity-50"
             >
               {isExporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-              {isExporting ? 'กำลังประมวลผลและสร้าง PDF...' : 'บันทึกและดาวน์โหลด PDF ที่แก้ไข'}
+              {isExporting ? 'กำลังสร้าง PDF...' : 'บันทึกและดาวน์โหลด PDF ที่แก้ไข'}
             </button>
           </div>
 
@@ -831,6 +863,7 @@ export const EditPdfTool: React.FC = () => {
                   <input
                     type="text"
                     autoFocus
+                    placeholder="พิมพ์ข้อความที่ต้องการแทนที่..."
                     value={editingTextValue}
                     onChange={(e) => setEditingTextValue(e.target.value)}
                     onKeyDown={(e) => {
@@ -842,14 +875,15 @@ export const EditPdfTool: React.FC = () => {
                       fontFamily: currentFontFamily,
                       fontWeight: isBold ? 'bold' : 'normal',
                     }}
-                    className="bg-transparent px-1 outline-none"
+                    className="min-w-[200px] bg-transparent px-1 outline-none text-slate-900"
                   />
                   <button
                     type="button"
                     onClick={saveEditingText}
-                    className="flex h-6 w-6 items-center justify-center rounded-md bg-emerald-600 text-white"
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-white shadow-xs"
+                    title="เสร็จสิ้น (Enter)"
                   >
-                    <Check className="h-3 w-3" />
+                    <Check className="h-3.5 w-3.5" />
                   </button>
                 </div>
               )}
