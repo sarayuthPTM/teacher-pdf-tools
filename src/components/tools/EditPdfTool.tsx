@@ -592,7 +592,7 @@ export const EditPdfTool: React.FC = () => {
       }
 
       const modifiedPdfBytes = await pdfLibDoc.save();
-      const blob = new Blob([modifiedPdfBytes], { type: 'application/pdf' });
+      const blob = new Blob([modifiedPdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
