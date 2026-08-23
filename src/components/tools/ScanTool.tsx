@@ -567,14 +567,100 @@ export const ScanTool: React.FC = () => {
                 draggable={false}
               />
 
-              {/* Perspective Polygon & Dark Mask Overlay */}
-              <svg className="pointer-events-none absolute inset-0 h-full w-full">
-                {/* Connecting border polygon */}
+              {/* Perspective Polygon, Solid Green Border Lines & 3x3 Alignment Grid */}
+              <svg
+                viewBox="0 0 100 100"
+                preserveAspectRatio="none"
+                className="pointer-events-none absolute inset-0 z-10 h-full w-full"
+              >
+                {/* Semi-transparent green highlighted document area */}
                 <polygon
-                  points={`${corners.tl.x}%,${corners.tl.y}% ${corners.tr.x}%,${corners.tr.y}% ${corners.br.x}%,${corners.br.y}% ${corners.bl.x}%,${corners.bl.y}%`}
-                  fill="rgba(34, 197, 94, 0.12)"
+                  points={`${corners.tl.x},${corners.tl.y} ${corners.tr.x},${corners.tr.y} ${corners.br.x},${corners.br.y} ${corners.bl.x},${corners.bl.y}`}
+                  fill="rgba(34, 197, 94, 0.15)"
+                />
+
+                {/* 3x3 Grid Guidelines (Clear Scanner style) */}
+                <line
+                  x1={corners.tl.x + (corners.bl.x - corners.tl.x) / 3}
+                  y1={corners.tl.y + (corners.bl.y - corners.tl.y) / 3}
+                  x2={corners.tr.x + (corners.br.x - corners.tr.x) / 3}
+                  y2={corners.tr.y + (corners.br.y - corners.tr.y) / 3}
                   stroke="#22c55e"
-                  strokeWidth="2.5"
+                  strokeWidth="0.5"
+                  strokeDasharray="1.5,1.5"
+                  opacity="0.85"
+                  vectorEffect="non-scaling-stroke"
+                />
+                <line
+                  x1={corners.tl.x + ((corners.bl.x - corners.tl.x) * 2) / 3}
+                  y1={corners.tl.y + ((corners.bl.y - corners.tl.y) * 2) / 3}
+                  x2={corners.tr.x + ((corners.br.x - corners.tr.x) * 2) / 3}
+                  y2={corners.tr.y + ((corners.br.y - corners.tr.y) * 2) / 3}
+                  stroke="#22c55e"
+                  strokeWidth="0.5"
+                  strokeDasharray="1.5,1.5"
+                  opacity="0.85"
+                  vectorEffect="non-scaling-stroke"
+                />
+                <line
+                  x1={corners.tl.x + (corners.tr.x - corners.tl.x) / 3}
+                  y1={corners.tl.y + (corners.tr.y - corners.tl.y) / 3}
+                  x2={corners.bl.x + (corners.br.x - corners.bl.x) / 3}
+                  y2={corners.bl.y + (corners.br.y - corners.bl.y) / 3}
+                  stroke="#22c55e"
+                  strokeWidth="0.5"
+                  strokeDasharray="1.5,1.5"
+                  opacity="0.85"
+                  vectorEffect="non-scaling-stroke"
+                />
+                <line
+                  x1={corners.tl.x + ((corners.tr.x - corners.tl.x) * 2) / 3}
+                  y1={corners.tl.y + ((corners.tr.y - corners.tl.y) * 2) / 3}
+                  x2={corners.bl.x + ((corners.br.x - corners.bl.x) * 2) / 3}
+                  y2={corners.bl.y + ((corners.br.y - corners.bl.y) * 2) / 3}
+                  stroke="#22c55e"
+                  strokeWidth="0.5"
+                  strokeDasharray="1.5,1.5"
+                  opacity="0.85"
+                  vectorEffect="non-scaling-stroke"
+                />
+
+                {/* 4 Outer Border Lines (Solid Bright Green lines connecting all points) */}
+                <line
+                  x1={corners.tl.x}
+                  y1={corners.tl.y}
+                  x2={corners.tr.x}
+                  y2={corners.tr.y}
+                  stroke="#22c55e"
+                  strokeWidth="1.2"
+                  vectorEffect="non-scaling-stroke"
+                />
+                <line
+                  x1={corners.tr.x}
+                  y1={corners.tr.y}
+                  x2={corners.br.x}
+                  y2={corners.br.y}
+                  stroke="#22c55e"
+                  strokeWidth="1.2"
+                  vectorEffect="non-scaling-stroke"
+                />
+                <line
+                  x1={corners.br.x}
+                  y1={corners.br.y}
+                  x2={corners.bl.x}
+                  y2={corners.bl.y}
+                  stroke="#22c55e"
+                  strokeWidth="1.2"
+                  vectorEffect="non-scaling-stroke"
+                />
+                <line
+                  x1={corners.bl.x}
+                  y1={corners.bl.y}
+                  x2={corners.tl.x}
+                  y2={corners.tl.y}
+                  stroke="#22c55e"
+                  strokeWidth="1.2"
+                  vectorEffect="non-scaling-stroke"
                 />
               </svg>
 
