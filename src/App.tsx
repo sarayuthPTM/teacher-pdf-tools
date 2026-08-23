@@ -32,7 +32,7 @@ import { Header } from './components/layout/Header';
 import { Footer } from './components/layout/Footer';
 import { AnnouncementBanner } from './components/layout/AnnouncementBanner';
 import { ToolCard } from './components/ui/ToolCard';
-import { loadSettings, saveSettings } from './lib/settings-service';
+import { loadSettings, saveSettings, syncSettingsFromCloud } from './lib/settings-service';
 import { trackToolUsage } from './lib/analytics-service';
 
 // Admin Components
@@ -382,6 +382,13 @@ export const App: React.FC = () => {
   const [onlineUsers, setOnlineUsers] = useState<number>(1);
 
   useEffect(() => {
+    // Sync central settings from Google Sheets Cloud
+    syncSettingsFromCloud().then((cloudSettings) => {
+      if (cloudSettings) {
+        setSettings(cloudSettings);
+      }
+    });
+
     // Increment visitor count per actual session
     const isCountedSession = sessionStorage.getItem('visited_session');
     if (!isCountedSession) {

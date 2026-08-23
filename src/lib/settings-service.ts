@@ -51,12 +51,71 @@ export function loadSettings(): SiteSettings {
 export function saveSettings(settings: SiteSettings): void {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    // Asynchronously save to Google Sheets Cloud Settings
+    saveSettingsToCloud(settings);
   } catch (e) {
     console.error('Failed to save settings:', e);
   }
+}
+
+/**
+ * Save settings to Google Sheets Cloud
+ */
+export async function saveSettingsToCloud(settings: SiteSettings): Promise<boolean> {
+  const url = settings.googleSheetsWebhookUrl || defaultSettings.googleSheetsWebhookUrl;
+  if (!url || !url.trim().startsWith('https://script.google.com/')) return false;
+
+  try {
+    await fetch(url.trim(), {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      body: JSON.stringify({
+        action: 'save_settings',
+        settings,
+      }),
+    });
+    return true;
+  } catch (e) {
+    console.warn('Failed to sync settings to cloud:', e);
+    return false;
+  }
+}
+
+/**
+ * Fetch and sync the latest central settings from Google Sheets Cloud
+ */
+export async function syncSettingsFromCloud(): Promise<SiteSettings | null> {
+  const localSettings = loadSettings();
+  const url = localSettings.googleSheetsWebhookUrl || defaultSettings.googleSheetsWebhookUrl;
+  if (!url || !url.trim().startsWith('https://script.google.com/')) return null;
+
+  try {
+    const fetchUrl = `${url.trim()}?action=get_settings&_t=${Date.now()}`;
+    const res = await fetch(fetchUrl);
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    if (data && data.status === 'success' && data.settings) {
+      const mergedSettings: SiteSettings = {
+        ...defaultSettings,
+        ...localSettings,
+        ...data.settings,
+        googleSheetsWebhookUrl: url,
+      };
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(mergedSettings));
+      return mergedSettings;
+    }
+  } catch (e) {
+    // Fail silently when offline
+  }
+  return null;
 }
 
 export function resetSettings(): SiteSettings {
   saveSettings(defaultSettings);
   return defaultSettings;
 }
+
