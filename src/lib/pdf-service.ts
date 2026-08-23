@@ -338,6 +338,9 @@ export async function pdfToDocx(
     let lastFontHeight: number = 12;
     let hasAnyText = false;
 
+    // Helper: check if string contains Thai characters (Unicode range \u0E00-\u0E7F)
+    const containsThai = (s: string) => /[\u0E00-\u0E7F]/.test(s);
+
     for (const item of textContent.items as any[]) {
       if ('str' in item && typeof item.str === 'string') {
         const cleanStr = sanitizeXmlText(item.str);
@@ -376,13 +379,27 @@ export async function pdfToDocx(
           // Same line: decide whether to insert space
           if (currentLineText && lastEndX !== null) {
             const gap = tx - lastEndX;
-            // Insert space only if gap is wider than ~30% of font height (a real word space)
-            const spaceThreshold = lastFontHeight * 0.3;
-            if (gap > spaceThreshold) {
-              currentLineText += ' ' + cleanStr;
+
+            // For Thai text: Canva/many generators store each Thai char separately
+            // Thai language does NOT use spaces between words, so we join tightly
+            // Only insert space for very large gaps (intentional spacing like columns)
+            const isThai = containsThai(cleanStr) || containsThai(currentLineText.slice(-3));
+
+            if (isThai) {
+              // Thai: only add space for very large obvious gaps (> full character width)
+              if (gap > fontHeight * 0.8) {
+                currentLineText += ' ' + cleanStr;
+              } else {
+                currentLineText += cleanStr;
+              }
             } else {
-              // Thai text items close together → join without space
-              currentLineText += cleanStr;
+              // Non-Thai (English/numbers): normal space threshold
+              const spaceThreshold = lastFontHeight * 0.3;
+              if (gap > spaceThreshold) {
+                currentLineText += ' ' + cleanStr;
+              } else {
+                currentLineText += cleanStr;
+              }
             }
           } else {
             currentLineText += cleanStr;
