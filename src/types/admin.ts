@@ -45,6 +45,7 @@ export interface SiteSettings {
   footerBadge1?: string;
   footerBadge2?: string;
   footerCopyright?: string;
+  googleSheetsWebhookUrl?: string;
   announcement: {
     enabled: boolean;
     text: string;

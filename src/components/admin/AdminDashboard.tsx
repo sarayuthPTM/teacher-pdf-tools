@@ -12,6 +12,8 @@ import {
   Filter,
   RefreshCw,
   Sparkles,
+  Table,
+  ExternalLink,
 } from 'lucide-react';
 import { getToolUsageStats, getActivityLogs } from '../../lib/analytics-service';
 import { ToolDefinition } from '../../types';
@@ -68,15 +70,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ allTools }) => {
 
     const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = url;
-    link.download = `tool_usage_report_${Date.now()}.csv`;
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `teacher_tools_statistics_${Date.now()}.csv`);
     link.click();
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Top Header */}
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
@@ -102,6 +104,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ allTools }) => {
             <Download className="h-3.5 w-3.5" /> ส่งออกรายงาน (.CSV)
           </button>
         </div>
+      </div>
+
+      {/* Google Sheets Live Sync Banner */}
+      <div className="flex flex-col items-start justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 shadow-sm dark:border-emerald-900/50 dark:bg-emerald-950/30 sm:flex-row sm:items-center">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-sm">
+            <Table className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-bold text-emerald-900 dark:text-emerald-200">
+                เชื่อมต่อฐานข้อมูล Google Sheets สถิติรวมเรียบร้อยแล้ว
+              </span>
+              <span className="flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" /> บันทึกอัตโนมัติ
+              </span>
+            </div>
+            <p className="mt-0.5 text-xs text-emerald-700 dark:text-emerald-300/80">
+              ทุกกิจกรรมการเข้าชมและใช้งานเครื่องมือจากทุกอุปกรณ์ จะถูกบันทึกลงชีตของคุณครูอัตโนมัติ
+            </p>
+          </div>
+        </div>
+
+        <a
+          href="https://docs.google.com/spreadsheets/d/1jx4UXimlulk3TCkWTUvvVlaHP8_BmWzFfg06bldB39o/edit"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex shrink-0 items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm transition-all hover:bg-emerald-700 hover:shadow-md"
+        >
+          <span>เปิดดู Google Sheet สถิติรวม</span>
+          <ExternalLink className="h-3.5 w-3.5" />
+        </a>
       </div>
 
       {/* KPI Cards (4 Cards - Replaced Bandwidth Card with Avg Daily Users) */}
