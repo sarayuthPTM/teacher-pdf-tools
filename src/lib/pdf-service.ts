@@ -334,6 +334,8 @@ export async function pdfToDocx(
 
     let currentLineText = '';
     let lastY: number | null = null;
+    let lastEndX: number | null = null;
+    let lastFontHeight: number = 12;
     let hasAnyText = false;
 
     for (const item of textContent.items as any[]) {
@@ -342,7 +344,18 @@ export async function pdfToDocx(
         if (!cleanStr) continue;
 
         hasAnyText = true;
-        if (lastY !== null && Math.abs(item.transform[5] - lastY) > 5) {
+
+        // Calculate item position & dimensions from transform matrix
+        const tx = item.transform[4]; // x position
+        const ty = item.transform[5]; // y position
+        const fontHeight = Math.abs(item.transform[3]) || 12;
+        const itemWidth = item.width || 0;
+
+        // Detect new line: Y position changed significantly
+        const isNewLine = lastY !== null && Math.abs(ty - lastY) > fontHeight * 0.3;
+
+        if (isNewLine) {
+          // Flush current line
           if (currentLineText.trim()) {
             docParagraphs.push(
               new Paragraph({
@@ -358,10 +371,27 @@ export async function pdfToDocx(
             );
           }
           currentLineText = cleanStr;
+          lastEndX = tx + itemWidth;
         } else {
-          currentLineText += (currentLineText ? ' ' : '') + cleanStr;
+          // Same line: decide whether to insert space
+          if (currentLineText && lastEndX !== null) {
+            const gap = tx - lastEndX;
+            // Insert space only if gap is wider than ~30% of font height (a real word space)
+            const spaceThreshold = lastFontHeight * 0.3;
+            if (gap > spaceThreshold) {
+              currentLineText += ' ' + cleanStr;
+            } else {
+              // Thai text items close together → join without space
+              currentLineText += cleanStr;
+            }
+          } else {
+            currentLineText += cleanStr;
+          }
+          lastEndX = tx + itemWidth;
         }
-        lastY = item.transform[5];
+
+        lastY = ty;
+        lastFontHeight = fontHeight;
       }
     }
 
