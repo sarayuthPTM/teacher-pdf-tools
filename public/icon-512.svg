@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="50%" stop-color="#7c3aed" />
+      <stop offset="100%" stop-color="#db2777" />
+    </linearGradient>
+    <linearGradient id="paperGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#f1f5f9" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="16" stdDeviation="24" flood-color="#000000" flood-opacity="0.3" />
+    </filter>
+  </defs>
+
+  <!-- Background Rounded Rect -->
+  <rect width="512" height="512" rx="120" fill="url(#bgGrad)" />
+
+  <!-- Inner Document Shape with Shadow -->
+  <g filter="url(#shadow)">
+    <!-- Document Base -->
+    <path d="M140 100 H300 L380 180 V400 C380 411.046 371.046 420 360 420 H140 C128.954 420 120 411.046 120 400 V120 C120 108.954 128.954 100 140 100 Z" fill="url(#paperGrad)" />
+    
+    <!-- Folded Corner -->
+    <path d="M300 100 V180 H380 Z" fill="#cbd5e1" opacity="0.8" />
+  </g>
+
+  <!-- Red PDF Badge -->
+  <rect x="150" y="210" width="80" height="34" rx="8" fill="#ef4444" />
+  <text x="190" y="234" fill="#ffffff" font-family="Arial, sans-serif" font-size="20" font-weight="900" text-anchor="middle">PDF</text>
+
+  <!-- Document Content Lines -->
+  <rect x="150" y="265" width="200" height="14" rx="7" fill="#64748b" opacity="0.6" />
+  <rect x="150" y="295" width="160" height="14" rx="7" fill="#64748b" opacity="0.6" />
+  <rect x="150" y="325" width="180" height="14" rx="7" fill="#64748b" opacity="0.6" />
+
+  <!-- AI Magic Star (Bottom Right) -->
+  <g transform="translate(320, 310) scale(1.4)">
+    <circle cx="28" cy="28" r="32" fill="#4f46e5" />
+    <path d="M28 8 L32 24 L48 28 L32 32 L28 48 L24 32 L8 28 L24 24 Z" fill="#fbbf24" />
+    <circle cx="44" cy="12" r="4" fill="#ffffff" />
+  </g>
+</svg>

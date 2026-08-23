@@ -1,0 +1,27 @@
+{
+  "name": "เครื่องมือสำหรับครู (PDF & Office Tools)",
+  "short_name": "เครื่องมือครู",
+  "description": "ระบบจัดการเอกสาร PDF งานสำนักงาน และผู้ช่วย AI สำหรับคุณครูและโรงเรียน ปลอดภัย 100%",
+  "start_url": "/",
+  "id": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f8fafc",
+  "theme_color": "#4f46e5",
+  "lang": "th",
+  "categories": ["education", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

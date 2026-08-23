@@ -1,0 +1,78 @@
+import { ActivityLog, ToolUsageStat } from '../types/admin';
+
+const USAGE_STATS_KEY = 'teacher_tools_usage_stats';
+const ACTIVITY_LOGS_KEY = 'teacher_tools_activity_logs';
+const VISITORS_KEY = 'teacher_tools_visitors';
+
+export function getToolUsageStats(): Record<string, number> {
+  try {
+    const saved = localStorage.getItem(USAGE_STATS_KEY);
+    if (!saved) return {};
+    return JSON.parse(saved);
+  } catch (e) {
+    console.error('Failed to get usage stats:', e);
+    return {};
+  }
+}
+
+export function trackToolUsage(toolId: string, toolTitle: string, details?: string): void {
+  try {
+    const currentStats = getToolUsageStats();
+    currentStats[toolId] = (currentStats[toolId] || 0) + 1;
+    localStorage.setItem(USAGE_STATS_KEY, JSON.stringify(currentStats));
+
+    // Append to recent activity logs
+    const logs = getActivityLogs();
+    const newLog: ActivityLog = {
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      toolId,
+      toolTitle,
+      timestamp: Date.now(),
+      details: details || 'ใช้งานสำเร็จ',
+    };
+    const updatedLogs = [newLog, ...logs].slice(0, 100); // keep last 100
+    localStorage.setItem(ACTIVITY_LOGS_KEY, JSON.stringify(updatedLogs));
+  } catch (e) {
+    console.error('Failed to track tool usage:', e);
+  }
+}
+
+export function getActivityLogs(): ActivityLog[] {
+  try {
+    const saved = localStorage.getItem(ACTIVITY_LOGS_KEY);
+    if (!saved) return [];
+    return JSON.parse(saved);
+  } catch (e) {
+    console.error('Failed to get activity logs:', e);
+    return [];
+  }
+}
+
+export function getVisitorCount(): number {
+  try {
+    const saved = localStorage.getItem(VISITORS_KEY);
+    return saved ? parseInt(saved, 10) : 1;
+  } catch (e) {
+    return 1;
+  }
+}
+
+export function incrementVisitorCount(): number {
+  try {
+    const count = getVisitorCount() + 1;
+    localStorage.setItem(VISITORS_KEY, count.toString());
+    return count;
+  } catch (e) {
+    return 1;
+  }
+}
+
+export function resetAllStats(): void {
+  try {
+    localStorage.removeItem(USAGE_STATS_KEY);
+    localStorage.removeItem(ACTIVITY_LOGS_KEY);
+    localStorage.setItem(VISITORS_KEY, '1');
+  } catch (e) {
+    console.error('Failed to reset stats:', e);
+  }
+}
