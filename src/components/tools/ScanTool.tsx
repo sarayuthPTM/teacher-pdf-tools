@@ -26,9 +26,14 @@ import {
   FileText,
   Image as ImageIcon,
   Palette,
+  Share2,
+  FileImage,
+  Send,
 } from 'lucide-react';
 import { FileDropzone } from '../ui/FileDropzone';
 import { PDFDocument } from 'pdf-lib';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 import { downloadBlob } from '../../lib/pdf-service';
 
 export type ScannerFilter = 'original' | 'photo' | 'document' | 'magic' | 'color' | 'bw';
@@ -509,6 +514,85 @@ export const ScanTool: React.FC = () => {
     } catch (err) {
       console.error(err);
       alert('เกิดข้อผิดพลาดในการสร้างไฟล์ PDF');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  /**
+   * Download as Images (JPG / ZIP)
+   */
+  const handleDownloadImages = async () => {
+    if (pages.length === 0) return;
+    try {
+      setIsProcessing(true);
+      if (pages.length === 1) {
+        // Single image: direct JPG download
+        const blob = await fetch(pages[0].processedDataUrl).then((r) => r.blob());
+        saveAs(blob, `scanned_image_${Date.now()}.jpg`);
+      } else {
+        // Multiple images: bundle into ZIP
+        const zip = new JSZip();
+        for (let i = 0; i < pages.length; i++) {
+          const blob = await fetch(pages[i].processedDataUrl).then((r) => r.blob());
+          zip.file(`scanned_page_${i + 1}.jpg`, blob);
+        }
+        const content = await zip.generateAsync({ type: 'blob' });
+        saveAs(content, `scanned_images_${Date.now()}.zip`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert('เกิดข้อผิดพลาดในการดาวน์โหลดรูปภาพ');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  /**
+   * Share Scanned Document to LINE / AirDrop / Google Drive / Email / Notes / Files
+   */
+  const handleShare = async () => {
+    if (pages.length === 0) return;
+    try {
+      setIsProcessing(true);
+      const pdfDoc = await PDFDocument.create();
+      for (const p of pages) {
+        const imageBytes = await fetch(p.processedDataUrl).then((r) => r.arrayBuffer());
+        const img = await pdfDoc.embedJpg(imageBytes);
+        const pageDoc = pdfDoc.addPage([img.width, img.height]);
+        pageDoc.drawImage(img, {
+          x: 0,
+          y: 0,
+          width: img.width,
+          height: img.height,
+        });
+      }
+      const pdfBytes = await pdfDoc.save();
+      const pdfFile = new File([pdfBytes as any], `scanned_doc_${Date.now()}.pdf`, {
+        type: 'application/pdf',
+      });
+
+      if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+        await navigator.share({
+          files: [pdfFile],
+          title: 'เอกสารสแกน (Clear Scanner)',
+          text: `เอกสารสแกน ${pages.length} หน้า จากระบบเครื่องมือครู`,
+        });
+      } else if (navigator.share) {
+        await navigator.share({
+          title: 'เอกสารสแกน (Clear Scanner)',
+          text: `เอกสารสแกน ${pages.length} หน้า จากระบบเครื่องมือครู`,
+          url: window.location.href,
+        });
+      } else {
+        // Fallback: download PDF
+        downloadBlob(new Blob([pdfBytes as any], { type: 'application/pdf' }), `scanned_doc_${Date.now()}.pdf`);
+      }
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        console.error(err);
+        alert('เกิดข้อผิดพลาดในการแชร์');
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -1064,40 +1148,64 @@ export const ScanTool: React.FC = () => {
                 </div>
               </div>
 
-              {/* Action Buttons */}
-              <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
-                <label className="flex cursor-pointer items-center gap-2 rounded-2xl border-2 border-dashed border-emerald-500 bg-emerald-50/50 px-6 py-3.5 text-sm font-bold text-emerald-700 transition hover:bg-emerald-50 dark:bg-emerald-950/20 dark:text-emerald-300">
-                  <Plus className="h-4 w-4" /> ถ่าย / สแกนหน้าถัดไป
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => {
-                      if (e.target.files && e.target.files.length > 0) {
-                        handleFilesSelected(Array.from(e.target.files));
-                      }
-                    }}
-                    className="hidden"
-                  />
-                </label>
+              {/* Action Buttons: Multi-export Options */}
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  {/* Add more pages */}
+                  <label className="flex cursor-pointer items-center gap-2 rounded-2xl border-2 border-dashed border-slate-300 bg-white px-5 py-3.5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
+                    <Plus className="h-4 w-4 text-emerald-600" /> + ถ่าย / สแกนหน้าถัดไป
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files.length > 0) {
+                          handleFilesSelected(Array.from(e.target.files));
+                        }
+                      }}
+                      className="hidden"
+                    />
+                  </label>
 
-                <button
-                  type="button"
-                  disabled={isProcessing}
-                  onClick={handleCreatePdf}
-                  className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 px-8 py-3.5 text-base font-bold text-white shadow-lift transition hover:opacity-95 disabled:opacity-50"
-                >
-                  {isProcessing ? (
-                    <>
-                      <Loader2 className="h-5 w-5 animate-spin" />
-                      กำลังสร้าง PDF รวมทุกหน้า...
-                    </>
-                  ) : (
-                    <>
-                      <Download className="h-5 w-5" />
-                      ดาวน์โหลด PDF ({pages.length} หน้า)
-                    </>
-                  )}
-                </button>
+                  {/* 1. Download as PDF */}
+                  <button
+                    type="button"
+                    disabled={isProcessing}
+                    onClick={handleCreatePdf}
+                    className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 px-6 py-3.5 text-sm font-bold text-white shadow-lift transition hover:opacity-95 disabled:opacity-50"
+                  >
+                    <Download className="h-4 w-4" />
+                    บันทึกเป็น PDF ({pages.length} หน้า)
+                  </button>
+
+                  {/* 2. Download as Images (JPG / ZIP) */}
+                  <button
+                    type="button"
+                    disabled={isProcessing}
+                    onClick={handleDownloadImages}
+                    className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-sky-500 to-blue-600 px-6 py-3.5 text-sm font-bold text-white shadow-lift transition hover:opacity-95 disabled:opacity-50"
+                  >
+                    <FileImage className="h-4 w-4" />
+                    {pages.length === 1 ? 'บันทึกเป็นรูปภาพ (JPG)' : `บันทึกรูปทั้งหมด (ZIP ${pages.length} ภาพ)`}
+                  </button>
+
+                  {/* 3. Share / Send To */}
+                  <button
+                    type="button"
+                    disabled={isProcessing}
+                    onClick={handleShare}
+                    className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-purple-500 to-pink-600 px-6 py-3.5 text-sm font-bold text-white shadow-lift transition hover:opacity-95 disabled:opacity-50"
+                  >
+                    <Share2 className="h-4 w-4" />
+                    แชร์ / ส่งเข้า LINE, Drive, อีเมล
+                  </button>
+                </div>
+
+                {isProcessing && (
+                  <div className="flex items-center justify-center gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
+                    <Loader2 className="h-4 w-4 animate-spin text-emerald-600" />
+                    กำลังประมวลผลไฟล์... กรุณารอสักครู่
+                  </div>
+                )}
               </div>
             </div>
           )}
