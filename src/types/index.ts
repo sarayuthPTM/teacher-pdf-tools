@@ -1,6 +1,7 @@
 import { LucideIcon } from 'lucide-react';
 
 export type ToolId =
+  | 'edit-pdf'
   | 'ai-summarize'
   | 'ai-chat-pdf'
   | 'ai-memo'

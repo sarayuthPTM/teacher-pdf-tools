@@ -24,6 +24,7 @@ import {
   MessageSquare,
   Bot,
   Zap,
+  FileEdit,
 } from 'lucide-react';
 import { ToolDefinition, ToolId } from './types';
 import { SiteSettings } from './types/admin';
@@ -46,6 +47,7 @@ import { AiChatPdfTool } from './components/tools/AiChatPdfTool';
 import { AiOfficialMemoTool } from './components/tools/AiOfficialMemoTool';
 
 // PDF & Office Tools Components
+import { EditPdfTool } from './components/tools/EditPdfTool';
 import { QRCodeTool } from './components/tools/QRCodeTool';
 import { MergeTool } from './components/tools/MergeTool';
 import { SplitTool } from './components/tools/SplitTool';
@@ -64,6 +66,24 @@ import { ScanTool } from './components/tools/ScanTool';
 import { AnnotateTool } from './components/tools/AnnotateTool';
 
 const allToolsDefinition: ToolDefinition[] = [
+  // --- CORE PDF EDITOR ---
+  {
+    id: 'edit-pdf',
+    title: 'แก้ไขไฟล์ PDF (Edit PDF)',
+    description: 'พิมพ์ข้อความ ลบ/ปิดทับคำเดิม วาด ไฮไลท์ และแทรกรูปภาพลงบนไฟล์ PDF ได้โดยตรง',
+    icon: FileEdit,
+    gradientFrom: 'from-blue-100/90 dark:from-blue-950/40',
+    gradientTo: 'to-indigo-50/70 dark:to-indigo-900/20',
+    borderColor: 'border-blue-300 dark:border-blue-800/60',
+    hoverBorder: 'hover:border-blue-500 dark:hover:border-blue-400',
+    iconBgFrom: 'from-blue-600',
+    iconBgTo: 'to-indigo-600',
+    iconColor: 'text-blue-600',
+    badge: 'แก้ไขได้ทันที ✏️',
+    badgeColor: 'bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300',
+    category: 'pdf',
+  },
+
   // --- 3 NEW AI TOOLS FOR TEACHERS ---
   {
     id: 'ai-summarize',
@@ -438,6 +458,8 @@ export const App: React.FC = () => {
 
   const renderActiveTool = () => {
     switch (activeTool) {
+      case 'edit-pdf':
+        return <EditPdfTool />;
       case 'ai-summarize':
         return <AiSummarizerTool />;
       case 'ai-chat-pdf':
