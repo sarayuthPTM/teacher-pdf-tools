@@ -14,8 +14,9 @@ import {
   Sparkles,
   Table,
   ExternalLink,
+  Loader2,
 } from 'lucide-react';
-import { getToolUsageStats, getActivityLogs } from '../../lib/analytics-service';
+import { getToolUsageStats, getActivityLogs, syncStatsFromCloud } from '../../lib/analytics-service';
 import { ToolDefinition } from '../../types';
 import { UsageAnalyticsChart } from './UsageAnalyticsChart';
 
@@ -28,10 +29,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ allTools }) => {
   const [logs, setLogs] = useState<any[]>([]);
   const [filterCategory, setFilterCategory] = useState<'all' | 'pdf' | 'image' | 'office'>('all');
   const [sortBy, setSortBy] = useState<'count' | 'name'>('count');
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const refreshData = () => {
+  const refreshData = async () => {
+    setIsRefreshing(true);
+    // Sync live data from Google Sheets if connected
+    await syncStatsFromCloud();
     setStats(getToolUsageStats());
     setLogs(getActivityLogs());
+    setIsRefreshing(false);
   };
 
   useEffect(() => {
@@ -93,9 +99,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ allTools }) => {
         <div className="flex items-center gap-2">
           <button
             onClick={refreshData}
-            className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+            disabled={isRefreshing}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
           >
-            <RefreshCw className="h-3.5 w-3.5" /> รีเฟรชข้อมูล
+            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-emerald-500' : ''}`} />
+            {isRefreshing ? 'กำลังซิงค์จาก Sheet...' : 'รีเฟรชข้อมูล'}
           </button>
           <button
             onClick={exportStatsCsv}

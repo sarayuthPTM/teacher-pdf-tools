@@ -139,3 +139,36 @@ export function resetAllStats(): void {
   }
 }
 
+/**
+ * Fetch and sync live stats from Google Sheets (so that clearing sheets updates the web dashboard)
+ */
+export async function syncStatsFromCloud(): Promise<boolean> {
+  const settings = loadSettings();
+  const url = settings.googleSheetsWebhookUrl;
+  if (!url || !url.trim().startsWith('https://script.google.com/')) return false;
+
+  try {
+    const fetchUrl = `${url.trim()}?action=get_stats&_t=${Date.now()}`;
+    const res = await fetch(fetchUrl);
+    if (!res.ok) return false;
+
+    const data = await res.json();
+    if (data && data.status === 'success') {
+      if (data.toolStats !== undefined) {
+        localStorage.setItem(USAGE_STATS_KEY, JSON.stringify(data.toolStats));
+      }
+      if (data.logs !== undefined) {
+        localStorage.setItem(ACTIVITY_LOGS_KEY, JSON.stringify(data.logs));
+      }
+      if (data.totalVisits !== undefined) {
+        localStorage.setItem(VISITORS_KEY, Math.max(1, data.totalVisits).toString());
+      }
+      return true;
+    }
+    return false;
+  } catch (e) {
+    console.warn('Failed to sync stats from cloud:', e);
+    return false;
+  }
+}
+
