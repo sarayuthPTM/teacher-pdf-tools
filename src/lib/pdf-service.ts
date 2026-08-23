@@ -332,99 +332,96 @@ export async function pdfToDocx(
       })
     );
 
-    let currentLineText = '';
-    let lastY: number | null = null;
-    let lastEndX: number | null = null;
-    let lastFontHeight: number = 12;
     let hasAnyText = false;
 
-    // Helper: check if string contains Thai characters (Unicode range \u0E00-\u0E7F)
-    const containsThai = (s: string) => /[\u0E00-\u0E7F]/.test(s);
+    // Collect all text items first
+    type TextItem = { str: string; x: number; y: number; w: number; h: number };
+    const allItems: TextItem[] = [];
 
     for (const item of textContent.items as any[]) {
       if ('str' in item && typeof item.str === 'string') {
         const cleanStr = sanitizeXmlText(item.str);
         if (!cleanStr) continue;
-
-        hasAnyText = true;
-
-        // Calculate item position & dimensions from transform matrix
-        const tx = item.transform[4]; // x position
-        const ty = item.transform[5]; // y position
-        const fontHeight = Math.abs(item.transform[3]) || 12;
-        const itemWidth = item.width || 0;
-
-        // Detect new line: Y position changed significantly
-        const isNewLine = lastY !== null && Math.abs(ty - lastY) > fontHeight * 0.3;
-
-        if (isNewLine) {
-          // Flush current line
-          if (currentLineText.trim()) {
-            docParagraphs.push(
-              new Paragraph({
-                children: [
-                  new TextRun({
-                    text: sanitizeXmlText(currentLineText),
-                    size: 24, // 12pt
-                    font: 'Angsana New',
-                  }),
-                ],
-                spacing: { after: 100 },
-              })
-            );
-          }
-          currentLineText = cleanStr;
-          lastEndX = tx + itemWidth;
-        } else {
-          // Same line: decide whether to insert space
-          if (currentLineText && lastEndX !== null) {
-            const gap = tx - lastEndX;
-
-            // For Thai text: Canva/many generators store each Thai char separately
-            // Thai language does NOT use spaces between words, so we join tightly
-            // Only insert space for very large gaps (intentional spacing like columns)
-            const isThai = containsThai(cleanStr) || containsThai(currentLineText.slice(-3));
-
-            if (isThai) {
-              // Thai: only add space for very large obvious gaps (> full character width)
-              if (gap > fontHeight * 0.8) {
-                currentLineText += ' ' + cleanStr;
-              } else {
-                currentLineText += cleanStr;
-              }
-            } else {
-              // Non-Thai (English/numbers): normal space threshold
-              const spaceThreshold = lastFontHeight * 0.3;
-              if (gap > spaceThreshold) {
-                currentLineText += ' ' + cleanStr;
-              } else {
-                currentLineText += cleanStr;
-              }
-            }
-          } else {
-            currentLineText += cleanStr;
-          }
-          lastEndX = tx + itemWidth;
-        }
-
-        lastY = ty;
-        lastFontHeight = fontHeight;
+        allItems.push({
+          str: cleanStr,
+          x: item.transform[4],
+          y: item.transform[5],
+          w: item.width || 0,
+          h: Math.abs(item.transform[3]) || 12,
+        });
       }
     }
 
-    if (currentLineText.trim()) {
-      docParagraphs.push(
-        new Paragraph({
-          children: [
-            new TextRun({
-              text: sanitizeXmlText(currentLineText),
-              size: 24,
-              font: 'Angsana New',
-            }),
-          ],
-          spacing: { after: 150 },
-        })
-      );
+    if (allItems.length === 0) {
+      hasAnyText = false;
+    } else {
+      hasAnyText = true;
+
+      // Group items into lines by Y position (within 2pt tolerance)
+      const lines: TextItem[][] = [];
+      for (const item of allItems) {
+        let placed = false;
+        for (const line of lines) {
+          if (Math.abs(line[0].y - item.y) <= 2) {
+            line.push(item);
+            placed = true;
+            break;
+          }
+        }
+        if (!placed) lines.push([item]);
+      }
+
+      // Sort lines top-to-bottom (PDF Y is bottom-up, so descending Y = top-to-bottom)
+      lines.sort((a, b) => b[0].y - a[0].y);
+
+      // Helper: does string contain Thai characters?
+      const isThai = (s: string) => /[\u0E00-\u0E7F]/.test(s);
+
+      for (const line of lines) {
+        // Sort items left-to-right by X
+        line.sort((a, b) => a.x - b.x);
+
+        let lineText = '';
+        let prevEndX: number | null = null;
+        let prevH = 12;
+
+        for (const item of line) {
+          if (!lineText) {
+            lineText = item.str;
+          } else {
+            const gap = item.x - (prevEndX ?? item.x);
+            const lineHasThai = isThai(lineText) || isThai(item.str);
+
+            if (lineHasThai) {
+              // Thai: NEVER add space based on gap — Thai language has no inter-character spaces
+              // Only add a space if the gap is extremely large (e.g. tab-like gap > 3x font height)
+              lineText += gap > prevH * 3 ? ' ' : '';
+              lineText += item.str;
+            } else {
+              // Non-Thai: add space when gap is meaningful (> 40% of font height)
+              lineText += gap > prevH * 0.4 ? ' ' : '';
+              lineText += item.str;
+            }
+          }
+          prevEndX = item.x + item.w;
+          prevH = item.h;
+        }
+
+        if (lineText.trim()) {
+          docParagraphs.push(
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: sanitizeXmlText(lineText),
+                  size: 24,
+                  font: 'Angsana New',
+                }),
+              ],
+              spacing: { after: 100 },
+            })
+          );
+        }
+      }
     }
 
     // If page has no selectable text (scanned image PDF like OMR sheet), render page notice
