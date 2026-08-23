@@ -49,7 +49,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           <div>
             <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">
-              กรอกรหัสผ่าน Admin PIN (ค่าเริ่มต้น: 1234)
+              กรอกรหัสผ่าน Admin PIN
             </label>
             <div className="relative">
               <KeyRound className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
