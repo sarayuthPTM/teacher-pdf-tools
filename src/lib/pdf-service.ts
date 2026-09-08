@@ -106,16 +106,89 @@ export async function renderPdfThumbnails(
 }
 
 /**
- * Merge multiple PDF files into one
+ * Merge multiple PDF and/or Image files into a single unified PDF
  */
 export async function mergePDFs(files: File[]): Promise<Blob> {
   const mergedPdf = await PDFDocument.create();
 
+  // Helper to convert any image file (JPG, PNG, WebP, BMP, GIF) to clean JPEG Data URL
+  const fileToJpegDataUrl = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(e.target?.result as string);
+            return;
+          }
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL('image/jpeg', 0.95));
+        };
+        img.onerror = () => reject(new Error(`Failed to load image: ${file.name}`));
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
+      reader.readAsDataURL(file);
+    });
+  };
+
   for (const file of files) {
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
-    const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
-    copiedPages.forEach((page) => mergedPdf.addPage(page));
+    const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp)$/i.test(file.name);
+
+    if (isImage) {
+      // 1. Image File Processing
+      const jpegDataUrl = await fileToJpegDataUrl(file);
+      const imageBytes = await fetch(jpegDataUrl).then((r) => r.arrayBuffer());
+      const embeddedImg = await mergedPdf.embedJpg(imageBytes);
+
+      // Standard A4 dimensions in points: 595.28 x 841.89
+      const a4Width = 595.28;
+      const a4Height = 841.89;
+
+      const imgWidth = embeddedImg.width;
+      const imgHeight = embeddedImg.height;
+      const isLandscape = imgWidth > imgHeight;
+
+      const pageWidth = isLandscape ? a4Height : a4Width;
+      const pageHeight = isLandscape ? a4Width : a4Height;
+
+      // Check if image aspect ratio is close to A4
+      const a4Aspect = isLandscape ? a4Height / a4Width : a4Width / a4Height;
+      const imgAspect = imgWidth / imgHeight;
+      const isCloseToA4 = Math.abs(imgAspect - a4Aspect) < 0.08;
+      const margin = isCloseToA4 ? 0 : 20;
+
+      const maxDrawWidth = pageWidth - margin * 2;
+      const maxDrawHeight = pageHeight - margin * 2;
+
+      const scale = Math.min(maxDrawWidth / imgWidth, maxDrawHeight / imgHeight);
+      const drawWidth = imgWidth * scale;
+      const drawHeight = imgHeight * scale;
+
+      const x = (pageWidth - drawWidth) / 2;
+      const y = (pageHeight - drawHeight) / 2;
+
+      const page = mergedPdf.addPage([pageWidth, pageHeight]);
+      page.drawImage(embeddedImg, {
+        x,
+        y,
+        width: drawWidth,
+        height: drawHeight,
+      });
+    } else {
+      // 2. PDF File Processing
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+      const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+      copiedPages.forEach((page) => mergedPdf.addPage(page));
+    }
   }
 
   const mergedBytes = await mergedPdf.save();

@@ -151,8 +151,8 @@ const allToolsDefinition: ToolDefinition[] = [
   },
   {
     id: 'merge',
-    title: 'รวมไฟล์ PDF',
-    description: 'ต่อหลายไฟล์เข้าด้วยกันตามลำดับที่จัดไว้',
+    title: 'รวมไฟล์ PDF & รูปภาพ',
+    description: 'รวมไฟล์ PDF และรูปภาพ (JPG, PNG, WEBP) เข้าด้วยกัน จัดเรียงลำดับได้ตามใจ',
     icon: Files,
     gradientFrom: 'from-blue-100/90 dark:from-blue-950/40',
     gradientTo: 'to-blue-50/70 dark:to-blue-900/20',
@@ -161,6 +161,8 @@ const allToolsDefinition: ToolDefinition[] = [
     iconBgFrom: 'from-blue-500',
     iconBgTo: 'to-indigo-600',
     iconColor: 'text-blue-500',
+    badge: 'รองรับรูปภาพ 🖼️',
+    badgeColor: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-300',
     category: 'pdf',
   },
   {
