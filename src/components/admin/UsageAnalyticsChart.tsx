@@ -32,6 +32,31 @@ export const UsageAnalyticsChart: React.FC = () => {
   const now = Date.now();
   const dayNames = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสฯ', 'ศุกร์', 'เสาร์'];
 
+  // Helper to safely parse dates from numbers or "dd/MM/yyyy HH:mm:ss" strings
+  const parseDate = (ts: any): Date => {
+    if (typeof ts === 'number') return new Date(ts);
+    if (!ts) return new Date();
+    if (typeof ts === 'string') {
+      const trimmed = ts.trim();
+      if (trimmed.includes('/')) {
+        const parts = trimmed.split(/[/ :]/);
+        if (parts.length >= 6) {
+          const d = parseInt(parts[0], 10);
+          const m = parseInt(parts[1], 10) - 1;
+          const y = parseInt(parts[2], 10);
+          const h = parseInt(parts[3], 10);
+          const min = parseInt(parts[4], 10);
+          const s = parseInt(parts[5], 10);
+          const date = new Date(y, m, d, h, min, s);
+          if (!isNaN(date.getTime())) return date;
+        }
+      }
+      const date = new Date(trimmed);
+      if (!isNaN(date.getTime())) return date;
+    }
+    return new Date();
+  };
+
   // 1. Today (by hour blocks)
   const todayPoints: DataPoint[] = [
     { label: '08:00', value: 0, subValue: 'เช้า' },
@@ -45,7 +70,7 @@ export const UsageAnalyticsChart: React.FC = () => {
 
   // Distribute real today logs
   logs.forEach((log) => {
-    const d = new Date(log.timestamp);
+    const d = parseDate(log.timestamp);
     if (d.toDateString() === new Date().toDateString()) {
       const hour = d.getHours();
       if (hour < 9) todayPoints[0].value += 1;
@@ -66,7 +91,7 @@ export const UsageAnalyticsChart: React.FC = () => {
     const dateStr = `${d.getDate()}/${d.getMonth() + 1}`;
 
     const count = logs.filter(
-      (l) => new Date(l.timestamp).toDateString() === d.toDateString()
+      (l) => parseDate(l.timestamp).toDateString() === d.toDateString()
     ).length;
 
     return {
@@ -85,7 +110,8 @@ export const UsageAnalyticsChart: React.FC = () => {
   ];
 
   logs.forEach((log) => {
-    const diffDays = Math.floor((now - log.timestamp) / (1000 * 60 * 60 * 24));
+    const d = parseDate(log.timestamp);
+    const diffDays = Math.floor((now - d.getTime()) / (1000 * 60 * 60 * 24));
     if (diffDays <= 7) thirtyDayPoints[0].value += 1;
     else if (diffDays <= 14) thirtyDayPoints[1].value += 1;
     else if (diffDays <= 21) thirtyDayPoints[2].value += 1;

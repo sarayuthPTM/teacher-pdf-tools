@@ -44,21 +44,40 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ allTools }) => {
     refreshData();
   }, []);
 
-  // Calculate totals
-  const totalOperations = Object.values(stats).reduce((a, b) => a + b, 0);
-  const visitorCount = parseInt(localStorage.getItem('teacher_tools_visitors') || '1', 10);
-  const avgDailyUsers = Math.max(1, Math.round(visitorCount / Math.max(1, (logs.length > 0 ? 7 : 1))));
-
-  // Map tool data with titles and usage counts
+  // Map tool data with titles and usage counts (matching by tool.id, tool.title, or partial match from Google Sheets)
   const toolStatsList = allTools.map((tool) => {
-    const count = stats[tool.id] || 0;
-    const percentage = totalOperations > 0 ? ((count / totalOperations) * 100).toFixed(1) : '0';
+    const countById = Number(stats[tool.id]) || 0;
+    const countByTitle = Number(stats[tool.title]) || 0;
+
+    let countByMatch = 0;
+    for (const [key, val] of Object.entries(stats)) {
+      if (key !== tool.id && key !== tool.title) {
+        if (key.includes(tool.title) || tool.title.includes(key)) {
+          countByMatch += Number(val) || 0;
+        }
+      }
+    }
+    const count = countById + countByTitle + countByMatch;
     return {
       ...tool,
       count,
-      percentage: parseFloat(percentage),
+      percentage: 0,
     };
   });
+
+  // Calculate totals from matched tools (or raw stats sum, whichever is larger)
+  const totalOperations = Math.max(
+    toolStatsList.reduce((a, b) => a + b.count, 0),
+    Object.values(stats).reduce((a, b) => a + (typeof b === 'number' ? b : parseInt(b as any, 10) || 0), 0)
+  );
+
+  // Recalculate percentages
+  toolStatsList.forEach((tool) => {
+    tool.percentage = totalOperations > 0 ? parseFloat(((tool.count / totalOperations) * 100).toFixed(1)) : 0;
+  });
+
+  const visitorCount = parseInt(localStorage.getItem('teacher_tools_visitors') || '1', 10);
+  const avgDailyUsers = Math.max(1, Math.round(visitorCount / Math.max(1, (logs.length > 0 ? 7 : 1))));
 
   // Filter & Sort
   const filteredList = toolStatsList
@@ -344,7 +363,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ allTools }) => {
 
             <div className="space-y-3">
               {logs.slice(0, 10).map((log) => {
-                const timeAgo = Math.round((Date.now() - log.timestamp) / (1000 * 60));
+                let timestampNum = Date.now();
+                if (typeof log.timestamp === 'number') {
+                  timestampNum = log.timestamp;
+                } else if (typeof log.timestamp === 'string') {
+                  const trimmed = log.timestamp.trim();
+                  if (trimmed.includes('/')) {
+                    const parts = trimmed.split(/[/ :]/);
+                    if (parts.length >= 6) {
+                      const d = parseInt(parts[0], 10);
+                      const m = parseInt(parts[1], 10) - 1;
+                      const y = parseInt(parts[2], 10);
+                      const h = parseInt(parts[3], 10);
+                      const min = parseInt(parts[4], 10);
+                      const s = parseInt(parts[5], 10);
+                      const parsed = new Date(y, m, d, h, min, s).getTime();
+                      if (!isNaN(parsed)) timestampNum = parsed;
+                    }
+                  } else {
+                    const parsed = new Date(trimmed).getTime();
+                    if (!isNaN(parsed)) timestampNum = parsed;
+                  }
+                }
+
+                const timeAgo = Math.max(0, Math.round((Date.now() - timestampNum) / (1000 * 60)));
                 const timeStr =
                   timeAgo < 1 ? 'เมื่อสักครู่' : timeAgo < 60 ? `${timeAgo} นาทีที่แล้ว` : `${Math.round(timeAgo / 60)} ชม. ที่แล้ว`;
 

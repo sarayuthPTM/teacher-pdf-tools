@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { downloadBlob } from '../../lib/pdf-service';
 import { PDFDocument } from 'pdf-lib';
+import { trackToolUsage } from '../../lib/analytics-service';
 
 export const QRCodeTool: React.FC = () => {
   const [text, setText] = useState('https://www.google.com');
@@ -175,6 +176,7 @@ export const QRCodeTool: React.FC = () => {
       name: `qrcode_${Date.now()}`,
       extension: format,
     });
+    trackToolUsage('qr-code', 'สร้าง QR Code ใส่โลโก้', `ดาวน์โหลดรูป QR Code (.${format.toUpperCase()})`);
   };
 
   const handleDownloadPdf = async () => {
@@ -203,6 +205,7 @@ export const QRCodeTool: React.FC = () => {
     const pdfBytes = await pdfDoc.save();
     const pdfBlob = new Blob([pdfBytes as any], { type: 'application/pdf' });
     downloadBlob(pdfBlob, `qrcode_${Date.now()}.pdf`);
+    trackToolUsage('qr-code', 'สร้าง QR Code ใส่โลโก้', 'ดาวน์โหลดเป็นเอกสาร PDF (A4)');
   };
 
   return (
