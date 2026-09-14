@@ -34,11 +34,6 @@ import { AnnouncementBanner } from './components/layout/AnnouncementBanner';
 import { ToolCard } from './components/ui/ToolCard';
 import { loadSettings, saveSettings, syncSettingsFromCloud } from './lib/settings-service';
 import { trackToolUsage, syncStatsFromCloud, incrementVisitorCount } from './lib/analytics-service';
-import {
-  loadWebsites,
-  convertWebsitesToToolDefinitions,
-  syncWebsitesFromCloud,
-} from './lib/website-service';
 
 // Admin Components
 import { AdminLayout } from './components/admin/AdminLayout';
@@ -376,13 +371,8 @@ const allToolsDefinition: ToolDefinition[] = [
 export const App: React.FC = () => {
   const [activeTool, setActiveTool] = useState<ToolId | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<'all' | 'ai' | 'pdf' | 'office' | 'image' | 'web'>('all');
+  const [selectedCategory, setSelectedCategory] = useState<'all' | 'ai' | 'pdf' | 'office' | 'image'>('all');
   const [isDark, setIsDark] = useState(false);
-
-  // Web Cards from website-service
-  const [webCards, setWebCards] = useState<ToolDefinition[]>(() => {
-    return convertWebsitesToToolDefinitions(loadWebsites());
-  });
 
   // Settings & Admin State
   const [settings, setSettings] = useState<SiteSettings>(loadSettings());
@@ -413,13 +403,6 @@ export const App: React.FC = () => {
       }
     });
 
-    // 4. Sync external website cards from Cloud
-    syncWebsitesFromCloud().then((cloudItems) => {
-      if (cloudItems && cloudItems.length > 0) {
-        setWebCards(convertWebsitesToToolDefinitions(cloudItems));
-      }
-    });
-
     // Dynamic active session estimate
     const randomActive = Math.floor(Math.random() * 2) + 1;
     setOnlineUsers(randomActive);
@@ -439,21 +422,16 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleSelectTool = (tool: ToolDefinition) => {
-    if (tool.isExternalLink && tool.externalUrl) {
-      trackToolUsage('portal', `เปิดเว็บ: ${tool.title}`, tool.externalUrl);
-      window.open(tool.externalUrl, '_blank', 'noopener,noreferrer');
-      return;
+  const handleSelectTool = (toolId: ToolId) => {
+    setActiveTool(toolId);
+    const toolDef = allToolsDefinition.find((t) => t.id === toolId);
+    if (toolDef) {
+      trackToolUsage(toolId, toolDef.title, 'เปิดใช้งานเครื่องมือ');
     }
-    setActiveTool(tool.id as ToolId);
-    trackToolUsage(tool.id, tool.title, 'เปิดใช้งานเครื่องมือ');
   };
 
-  // Combine core tools and external web cards
-  const allAvailableCards: ToolDefinition[] = [...allToolsDefinition, ...webCards];
-
   // Sort tools by settings.toolOrder (if configured)
-  const orderedTools = [...allAvailableCards].sort((a, b) => {
+  const orderedTools = [...allToolsDefinition].sort((a, b) => {
     if (!settings.toolOrder || settings.toolOrder.length === 0) return 0;
     const idxA = settings.toolOrder.indexOf(a.id);
     const idxB = settings.toolOrder.indexOf(b.id);
@@ -623,7 +601,6 @@ export const App: React.FC = () => {
                       { id: 'pdf' as const, label: '📄 งาน PDF' },
                       { id: 'office' as const, label: '🏢 สำนักงาน & QR' },
                       { id: 'image' as const, label: '🖼️ รูปภาพ' },
-                      { id: 'web' as const, label: '🌐 เว็บ & ระบบออนไลน์' },
                     ].map((cat) => (
                       <button
                         key={cat.id}
@@ -648,7 +625,7 @@ export const App: React.FC = () => {
                   <ToolCard
                     key={tool.id}
                     tool={tool}
-                    onClick={() => handleSelectTool(tool)}
+                    onClick={() => handleSelectTool(tool.id)}
                   />
                 ))}
               </div>

@@ -9,12 +9,17 @@
     <meta http-equiv="Expires" content="0" />
     <title>เครื่องมือสำหรับครู — ระบบจัดการเอกสาร PDF & สำนักงานอัจฉริยะ</title>
     <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistrations().then(function(registrations) {
+          for (var i = 0; i < registrations.length; i++) {
+            registrations[i].unregister();
+          }
+        });
+      }
       if ('caches' in window) {
         caches.keys().then(function(keys) {
           keys.forEach(function(key) {
-            if (key !== 'teacher-tools-v5') {
-              caches.delete(key);
-            }
+            caches.delete(key);
           });
         });
       }

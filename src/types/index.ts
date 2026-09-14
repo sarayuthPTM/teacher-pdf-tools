@@ -36,9 +36,7 @@ export interface ToolDefinition {
   iconColor: string;
   badge?: string;
   badgeColor?: string;
-  category: 'pdf' | 'image' | 'office' | 'ai' | 'web';
-  isExternalLink?: boolean;
-  externalUrl?: string;
+  category: 'pdf' | 'image' | 'office' | 'ai';
 }
 
 export interface PDFPageInfo {

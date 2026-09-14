@@ -3,26 +3,18 @@ import ReactDOM from 'react-dom/client';
 import { App } from './App';
 import './index.css';
 
-// Register Service Worker for PWA
+// Unregister all Service Workers and clear all PWA caches to prevent cache traps
 if ('serviceWorker' in navigator) {
-  let refreshing = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!refreshing) {
-      refreshing = true;
-      window.location.reload();
+  navigator.serviceWorker.getRegistrations().then((registrations) => {
+    for (const registration of registrations) {
+      registration.unregister();
     }
   });
+}
 
-  window.addEventListener('load', () => {
-    navigator.serviceWorker
-      .register('/sw.js')
-      .then((reg) => {
-        reg.update();
-        console.log('PWA Service Worker registered and updated:', reg.scope);
-      })
-      .catch((err) => {
-        console.log('PWA Service Worker registration failed:', err);
-      });
+if ('caches' in window) {
+  caches.keys().then((keys) => {
+    keys.forEach((key) => caches.delete(key));
   });
 }
 

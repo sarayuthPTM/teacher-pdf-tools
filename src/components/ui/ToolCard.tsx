@@ -1,5 +1,4 @@
 import React from 'react';
-import { ExternalLink } from 'lucide-react';
 import { ToolDefinition } from '../../types';
 
 interface ToolCardProps {
@@ -40,14 +39,9 @@ export const ToolCard: React.FC<ToolCardProps> = ({ tool, onClick }) => {
 
       {/* Content */}
       <div className="relative min-w-0 flex-1">
-        <div className="flex items-center justify-center gap-1.5 sm:justify-start">
-          <h3 className="text-base font-bold text-slate-900 line-clamp-1 dark:text-white sm:text-lg">
-            {tool.title}
-          </h3>
-          {tool.isExternalLink && (
-            <ExternalLink className="h-3.5 w-3.5 shrink-0 text-slate-400 opacity-60 group-hover:opacity-100 dark:text-slate-400" />
-          )}
-        </div>
+        <h3 className="text-base font-bold text-slate-900 line-clamp-1 dark:text-white sm:text-lg">
+          {tool.title}
+        </h3>
         <p className="mt-1 text-xs leading-relaxed text-slate-600 line-clamp-2 dark:text-slate-300 sm:text-sm">
           {tool.description}
         </p>
