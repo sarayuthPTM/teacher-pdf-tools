@@ -13,12 +13,14 @@ import {
   Mail,
   Menu,
   X,
+  Globe,
 } from 'lucide-react';
 import { AdminTab, SiteSettings } from '../../types/admin';
 import { ToolDefinition } from '../../types';
 import { AdminDashboard } from './AdminDashboard';
 import { AdminToolsManager } from './AdminToolsManager';
 import { AdminAiSettings } from './AdminAiSettings';
+import { WebPortalManager } from './WebPortalManager';
 import { AdminThemeSettings } from './AdminThemeSettings';
 import { AdminAnnouncement } from './AdminAnnouncement';
 import { AdminMessages } from './AdminMessages';
@@ -54,6 +56,12 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
       label: 'จัดการเครื่องมือ',
       icon: Sliders,
       desc: 'เปิด-ปิดเมนู และปักหมุดแนะนำ',
+    },
+    {
+      id: 'web-portal' as AdminTab,
+      label: 'เว็บภายนอก & ไซด์บาร์',
+      icon: Globe,
+      desc: 'จัดการรายชื่อเว็บไซต์และลิงก์ด่วน',
     },
     {
       id: 'ai' as AdminTab,
@@ -252,6 +260,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
               onUpdateSettings={onUpdateSettings}
             />
           )}
+          {activeTab === 'web-portal' && <WebPortalManager />}
           {activeTab === 'ai' && (
             <AdminAiSettings
               settings={settings}

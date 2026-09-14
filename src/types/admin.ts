@@ -53,4 +53,4 @@ export interface SiteSettings {
   };
 }
 
-export type AdminTab = 'dashboard' | 'tools' | 'ai' | 'theme' | 'announcement' | 'messages' | 'security';
+export type AdminTab = 'dashboard' | 'tools' | 'ai' | 'web-portal' | 'theme' | 'announcement' | 'messages' | 'security';

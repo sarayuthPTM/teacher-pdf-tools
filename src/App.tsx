@@ -31,6 +31,7 @@ import { SiteSettings } from './types/admin';
 import { Header } from './components/layout/Header';
 import { Footer } from './components/layout/Footer';
 import { AnnouncementBanner } from './components/layout/AnnouncementBanner';
+import { WebPortalSidebar } from './components/layout/WebPortalSidebar';
 import { ToolCard } from './components/ui/ToolCard';
 import { loadSettings, saveSettings, syncSettingsFromCloud } from './lib/settings-service';
 import { trackToolUsage, syncStatsFromCloud, incrementVisitorCount } from './lib/analytics-service';
@@ -541,7 +542,11 @@ export const App: React.FC = () => {
         siteTitle={settings.siteTitle}
       />
 
-      <main className="flex-1 px-4 py-6 sm:px-8 sm:py-10 lg:px-12">
+      <div className="flex flex-1 overflow-x-hidden">
+        {/* Left Collapsible Web Portal Sidebar */}
+        {!isAdminOpen && <WebPortalSidebar onOpenAdmin={() => setIsLoginModalOpen(true)} />}
+
+        <main className="min-w-0 flex-1 px-4 py-6 sm:px-8 sm:py-10 lg:px-12">
         <div className="mx-auto w-full max-w-[1600px]">
           {activeTool ? (
             <div>{renderActiveTool()}</div>
@@ -633,6 +638,7 @@ export const App: React.FC = () => {
           )}
         </div>
       </main>
+      </div>
 
       <Footer
         securityText={settings.footerSecurityText}
