@@ -1,7 +1,5 @@
-const CACHE_NAME = 'teacher-tools-v2';
+const CACHE_NAME = 'teacher-tools-v5';
 const STATIC_ASSETS = [
-  '/',
-  '/index.html',
   '/manifest.json',
   '/icon-192.svg',
   '/icon-512.svg',
@@ -18,7 +16,7 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
-// Activate Event
+// Activate Event: Immediately delete all old caches
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => {
@@ -34,15 +32,27 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch Event (Network First with Cache Fallback)
+// Fetch Event (Always Network First for HTML and scripts)
 self.addEventListener('fetch', (event) => {
-  // Only handle http/https requests
   if (!event.request.url.startsWith('http')) return;
 
+  const isHtml =
+    event.request.mode === 'navigate' ||
+    (event.request.headers.get('accept') && event.request.headers.get('accept').includes('text/html'));
+
+  // Never cache HTML: Always fetch latest from server
+  if (isHtml) {
+    event.respondWith(
+      fetch(event.request)
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Network First for assets
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        // Clone response and cache it
         if (response && response.status === 200 && response.type === 'basic') {
           const responseToCache = response.clone();
           caches.open(CACHE_NAME).then((cache) => {
@@ -51,9 +61,7 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       })
-      .catch(() => {
-        // If network fails, serve from cache
-        return caches.match(event.request);
-      })
+      .catch(() => caches.match(event.request))
   );
 });
+

@@ -4,7 +4,21 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>เครื่องมือสำหรับครู — ระบบจัดการเอกสาร PDF & สำนักงานอัจฉริยะ</title>
+    <script>
+      if ('caches' in window) {
+        caches.keys().then(function(keys) {
+          keys.forEach(function(key) {
+            if (key !== 'teacher-tools-v5') {
+              caches.delete(key);
+            }
+          });
+        });
+      }
+    </script>
     
     <!-- PWA & Mobile Web App Meta Tags -->
     <link rel="manifest" href="/manifest.json" />
