@@ -31,10 +31,14 @@ import { SiteSettings } from './types/admin';
 import { Header } from './components/layout/Header';
 import { Footer } from './components/layout/Footer';
 import { AnnouncementBanner } from './components/layout/AnnouncementBanner';
-import { WebPortalSidebar } from './components/layout/WebPortalSidebar';
 import { ToolCard } from './components/ui/ToolCard';
 import { loadSettings, saveSettings, syncSettingsFromCloud } from './lib/settings-service';
 import { trackToolUsage, syncStatsFromCloud, incrementVisitorCount } from './lib/analytics-service';
+import {
+  loadWebsites,
+  convertWebsitesToToolDefinitions,
+  syncWebsitesFromCloud,
+} from './lib/website-service';
 
 // Admin Components
 import { AdminLayout } from './components/admin/AdminLayout';
@@ -372,8 +376,13 @@ const allToolsDefinition: ToolDefinition[] = [
 export const App: React.FC = () => {
   const [activeTool, setActiveTool] = useState<ToolId | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<'all' | 'ai' | 'pdf' | 'office' | 'image'>('all');
+  const [selectedCategory, setSelectedCategory] = useState<'all' | 'ai' | 'pdf' | 'office' | 'image' | 'web'>('all');
   const [isDark, setIsDark] = useState(false);
+
+  // Web Cards from website-service
+  const [webCards, setWebCards] = useState<ToolDefinition[]>(() => {
+    return convertWebsitesToToolDefinitions(loadWebsites());
+  });
 
   // Settings & Admin State
   const [settings, setSettings] = useState<SiteSettings>(loadSettings());
@@ -404,6 +413,13 @@ export const App: React.FC = () => {
       }
     });
 
+    // 4. Sync external website cards from Cloud
+    syncWebsitesFromCloud().then((cloudItems) => {
+      if (cloudItems && cloudItems.length > 0) {
+        setWebCards(convertWebsitesToToolDefinitions(cloudItems));
+      }
+    });
+
     // Dynamic active session estimate
     const randomActive = Math.floor(Math.random() * 2) + 1;
     setOnlineUsers(randomActive);
@@ -423,16 +439,21 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleSelectTool = (toolId: ToolId) => {
-    setActiveTool(toolId);
-    const toolDef = allToolsDefinition.find((t) => t.id === toolId);
-    if (toolDef) {
-      trackToolUsage(toolId, toolDef.title, 'เปิดใช้งานเครื่องมือ');
+  const handleSelectTool = (tool: ToolDefinition) => {
+    if (tool.isExternalLink && tool.externalUrl) {
+      trackToolUsage('portal', `เปิดเว็บ: ${tool.title}`, tool.externalUrl);
+      window.open(tool.externalUrl, '_blank', 'noopener,noreferrer');
+      return;
     }
+    setActiveTool(tool.id as ToolId);
+    trackToolUsage(tool.id, tool.title, 'เปิดใช้งานเครื่องมือ');
   };
 
+  // Combine core tools and external web cards
+  const allAvailableCards: ToolDefinition[] = [...allToolsDefinition, ...webCards];
+
   // Sort tools by settings.toolOrder (if configured)
-  const orderedTools = [...allToolsDefinition].sort((a, b) => {
+  const orderedTools = [...allAvailableCards].sort((a, b) => {
     if (!settings.toolOrder || settings.toolOrder.length === 0) return 0;
     const idxA = settings.toolOrder.indexOf(a.id);
     const idxB = settings.toolOrder.indexOf(b.id);
@@ -542,11 +563,7 @@ export const App: React.FC = () => {
         siteTitle={settings.siteTitle}
       />
 
-      <div className="flex flex-1 overflow-x-hidden">
-        {/* Left Collapsible Web Portal Sidebar */}
-        {!isAdminOpen && <WebPortalSidebar onOpenAdmin={() => setIsLoginModalOpen(true)} />}
-
-        <main className="min-w-0 flex-1 px-4 py-6 sm:px-8 sm:py-10 lg:px-12">
+      <main className="flex-1 px-4 py-6 sm:px-8 sm:py-10 lg:px-12">
         <div className="mx-auto w-full max-w-[1600px]">
           {activeTool ? (
             <div>{renderActiveTool()}</div>
@@ -606,6 +623,7 @@ export const App: React.FC = () => {
                       { id: 'pdf' as const, label: '📄 งาน PDF' },
                       { id: 'office' as const, label: '🏢 สำนักงาน & QR' },
                       { id: 'image' as const, label: '🖼️ รูปภาพ' },
+                      { id: 'web' as const, label: '🌐 เว็บ & ระบบออนไลน์' },
                     ].map((cat) => (
                       <button
                         key={cat.id}
@@ -630,7 +648,7 @@ export const App: React.FC = () => {
                   <ToolCard
                     key={tool.id}
                     tool={tool}
-                    onClick={() => handleSelectTool(tool.id)}
+                    onClick={() => handleSelectTool(tool)}
                   />
                 ))}
               </div>
@@ -638,7 +656,6 @@ export const App: React.FC = () => {
           )}
         </div>
       </main>
-      </div>
 
       <Footer
         securityText={settings.footerSecurityText}

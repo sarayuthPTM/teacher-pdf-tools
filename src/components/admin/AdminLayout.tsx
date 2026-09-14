@@ -59,9 +59,9 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({
     },
     {
       id: 'web-portal' as AdminTab,
-      label: 'เว็บภายนอก & ไซด์บาร์',
+      label: 'การ์ดเว็บไซต์ภายนอก',
       icon: Globe,
-      desc: 'จัดการรายชื่อเว็บไซต์และลิงก์ด่วน',
+      desc: 'เพิ่มลิงก์เว็บให้แสดงเป็นการ์ดในหน้าแรก',
     },
     {
       id: 'ai' as AdminTab,

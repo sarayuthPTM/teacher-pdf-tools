@@ -179,3 +179,105 @@ export async function syncWebsitesFromCloud(): Promise<WebPortalItem[] | null> {
   }
   return null;
 }
+
+import {
+  Globe,
+  School,
+  BookOpen,
+  HardDrive,
+  BarChart3,
+  Palette,
+  FileText,
+  Link,
+  LucideIcon,
+} from 'lucide-react';
+import { ToolDefinition } from '../types';
+
+/**
+ * Converts WebPortalItems to standard ToolDefinition cards for rendering in the main grid
+ */
+export function convertWebsitesToToolDefinitions(items: WebPortalItem[]): ToolDefinition[] {
+  const iconMap: Record<string, LucideIcon> = {
+    school: School,
+    book: BookOpen,
+    drive: HardDrive,
+    chart: BarChart3,
+    palette: Palette,
+    file: FileText,
+    link: Link,
+    globe: Globe,
+  };
+
+  const themeMap: Record<string, any> = {
+    school: {
+      gradientFrom: 'from-sky-100/90 dark:from-sky-950/40',
+      gradientTo: 'to-blue-50/70 dark:to-blue-900/20',
+      borderColor: 'border-sky-300 dark:border-sky-800/60',
+      hoverBorder: 'hover:border-sky-500 dark:hover:border-sky-400',
+      iconBgFrom: 'from-sky-600',
+      iconBgTo: 'to-blue-600',
+      iconColor: 'text-sky-600',
+      badge: 'ระบบโรงเรียน 🏫',
+      badgeColor: 'bg-sky-100 text-sky-700 dark:bg-sky-900/60 dark:text-sky-300',
+    },
+    official: {
+      gradientFrom: 'from-emerald-100/90 dark:from-emerald-950/40',
+      gradientTo: 'to-teal-50/70 dark:to-teal-900/20',
+      borderColor: 'border-emerald-300 dark:border-emerald-800/60',
+      hoverBorder: 'hover:border-emerald-500 dark:hover:border-emerald-400',
+      iconBgFrom: 'from-emerald-600',
+      iconBgTo: 'to-teal-600',
+      iconColor: 'text-emerald-600',
+      badge: 'งานราชการ 📑',
+      badgeColor: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300',
+    },
+    teaching: {
+      gradientFrom: 'from-purple-100/90 dark:from-purple-950/40',
+      gradientTo: 'to-pink-50/70 dark:to-pink-900/20',
+      borderColor: 'border-purple-300 dark:border-purple-800/60',
+      hoverBorder: 'hover:border-purple-500 dark:hover:border-purple-400',
+      iconBgFrom: 'from-purple-600',
+      iconBgTo: 'to-pink-600',
+      iconColor: 'text-purple-600',
+      badge: 'สื่อการสอน 🎨',
+      badgeColor: 'bg-purple-100 text-purple-700 dark:bg-purple-900/60 dark:text-purple-300',
+    },
+    general: {
+      gradientFrom: 'from-indigo-100/90 dark:from-indigo-950/40',
+      gradientTo: 'to-violet-50/70 dark:to-violet-900/20',
+      borderColor: 'border-indigo-300 dark:border-indigo-800/60',
+      hoverBorder: 'hover:border-indigo-500 dark:hover:border-indigo-400',
+      iconBgFrom: 'from-indigo-600',
+      iconBgTo: 'to-violet-600',
+      iconColor: 'text-indigo-600',
+      badge: 'ระบบออนไลน์ 🔗',
+      badgeColor: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-300',
+    },
+  };
+
+  return items
+    .filter((item) => item.isActive)
+    .map((item) => {
+      const Icon = iconMap[item.iconType] || Globe;
+      const theme = themeMap[item.category] || themeMap.general;
+
+      return {
+        id: item.id as any,
+        title: item.title,
+        description: item.description || item.url,
+        icon: Icon,
+        gradientFrom: theme.gradientFrom,
+        gradientTo: theme.gradientTo,
+        borderColor: theme.borderColor,
+        hoverBorder: theme.hoverBorder,
+        iconBgFrom: theme.iconBgFrom,
+        iconBgTo: theme.iconBgTo,
+        iconColor: theme.iconColor,
+        badge: theme.badge,
+        badgeColor: theme.badgeColor,
+        category: 'web',
+        isExternalLink: true,
+        externalUrl: item.url,
+      };
+    });
+}

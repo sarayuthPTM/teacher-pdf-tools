@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Globe,
   Plus,
@@ -157,10 +157,10 @@ export const WebPortalManager: React.FC = () => {
         <div>
           <h3 className="flex items-center gap-2 text-lg font-bold text-slate-900 dark:text-white">
             <Globe className="h-5 w-5 text-sky-500" />
-            จัดการเว็บไซต์และระบบออนไลน์ภายนอก (Web Portal)
+            จัดการการ์ดเว็บไซต์และระบบออนไลน์ภายนอก
           </h3>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            เพิ่ม แก้ไข และจัดระเบียบลิงก์เว็บสำหรับคุณครูที่จะแสดงในแถบไซด์บาร์
+            เพิ่ม แก้ไข และจัดระเบียบการ์ดเว็บไซต์ที่จะแสดงร่วมกับการ์ดเครื่องมือในหน้าแรก
           </p>
         </div>
 
