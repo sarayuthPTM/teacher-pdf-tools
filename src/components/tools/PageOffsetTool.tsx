@@ -36,6 +36,7 @@ export const PageOffsetTool: React.FC = () => {
   const [topValue, setTopValue] = useState<number>(0);
   const [bottomValue, setBottomValue] = useState<number>(0);
   const [enableVertical, setEnableVertical] = useState<boolean>(false);
+  const [scalePercent, setScalePercent] = useState<number>(100);
 
   const [mode, setMode] = useState<'shift' | 'fit-margin' | 'expand'>('fit-margin');
   const [isMirrorPages, setIsMirrorPages] = useState<boolean>(false);
@@ -136,6 +137,7 @@ export const PageOffsetTool: React.FC = () => {
       setRightValue(0);
       setTopValue(0);
       setBottomValue(0);
+      setScalePercent(100);
     }
   };
 
@@ -152,6 +154,7 @@ export const PageOffsetTool: React.FC = () => {
         marginRightPt: toPt(rightValue),
         marginTopPt: enableVertical ? toPt(topValue) : 0,
         marginBottomPt: enableVertical ? toPt(bottomValue) : 0,
+        scalePercent,
         mode,
         isMirrorPages,
         pageScope,
@@ -186,18 +189,21 @@ export const PageOffsetTool: React.FC = () => {
   const rightPercent = Math.max(0, Math.min(40, (currentRightPt / pageWidthPt) * 100));
 
   // Visual CSS transform for the page preview
+  const userScaleMult = Math.max(0.2, scalePercent / 100);
   let previewTransform = '';
   if (mode === 'shift') {
     const shiftXPercent = ((currentLeftPt - currentRightPt) / pageWidthPt) * 100;
     const shiftYPercent = ((currentBottomPt - currentTopPt) / pageHeightPt) * 100;
-    previewTransform = `translate(${shiftXPercent}%, ${-shiftYPercent}%)`;
+    previewTransform = `translate(${shiftXPercent}%, ${-shiftYPercent}%) scale(${userScaleMult})`;
   } else if (mode === 'fit-margin') {
     const availW = Math.max(20, pageWidthPt - (currentLeftPt + currentRightPt));
     const availH = Math.max(20, pageHeightPt - (currentTopPt + currentBottomPt));
-    const scale = Math.min(availW / pageWidthPt, availH / pageHeightPt);
+    const scale = Math.min(availW / pageWidthPt, availH / pageHeightPt) * userScaleMult;
     const offsetX = ((currentLeftPt - currentRightPt) / 2 / pageWidthPt) * 100;
     const offsetY = ((currentBottomPt - currentTopPt) / 2 / pageHeightPt) * 100;
-    previewTransform = `translate(${offsetX}%, ${-offsetY}%) scale(${Math.max(0.4, scale)})`;
+    previewTransform = `translate(${offsetX}%, ${-offsetY}%) scale(${Math.max(0.2, scale)})`;
+  } else if (mode === 'expand') {
+    previewTransform = `scale(${userScaleMult})`;
   }
 
   return (
@@ -434,6 +440,85 @@ export const PageOffsetTool: React.FC = () => {
                       <span>ลดระยะ ({getMin()} {unit})</span>
                       <span>0</span>
                       <span>เพิ่มระยะ (+{getMax()} {unit})</span>
+                    </div>
+                  </div>
+
+                  {/* Content Zoom / Scaling Slider Card */}
+                  <div className="rounded-2xl border border-purple-100 bg-purple-50/40 p-4 dark:border-purple-950/60 dark:bg-purple-950/20">
+                    <div className="mb-2 flex items-center justify-between">
+                      <label className="text-xs font-bold text-purple-950 dark:text-purple-200 flex items-center gap-1.5">
+                        <span>🔍</span>
+                        <span>ปรับขนาดเนื้อหา (ขยายให้ใหญ่ขึ้น / ย่อลง)</span>
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setScalePercent((s) => Math.max(50, s - 5))}
+                          className="flex h-6 w-6 items-center justify-center rounded-lg bg-white text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-200"
+                        >
+                          -
+                        </button>
+                        <input
+                          type="number"
+                          min={50}
+                          max={250}
+                          step={5}
+                          value={scalePercent}
+                          onChange={(e) => setScalePercent(Math.max(50, Math.min(250, Number(e.target.value))))}
+                          className="w-16 rounded-lg border border-slate-300 bg-white px-2 py-1 text-center text-xs font-bold text-purple-700 dark:border-slate-700 dark:bg-slate-800 dark:text-purple-300"
+                        />
+                        <span className="text-xs font-bold text-slate-500">%</span>
+                        <button
+                          type="button"
+                          onClick={() => setScalePercent((s) => Math.min(250, s + 5))}
+                          className="flex h-6 w-6 items-center justify-center rounded-lg bg-white text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-200"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+
+                    <input
+                      type="range"
+                      min={50}
+                      max={200}
+                      step={5}
+                      value={scalePercent}
+                      onChange={(e) => setScalePercent(Number(e.target.value))}
+                      className="w-full accent-purple-600 cursor-pointer"
+                    />
+
+                    <div className="flex justify-between text-[10px] text-slate-400 mb-3">
+                      <span>50% (ย่อเล็ก)</span>
+                      <span className="font-semibold text-slate-600 dark:text-slate-300">100% (ขนาดปกติ)</span>
+                      <span>200% (ขยายใหญ่ 2 เท่า)</span>
+                    </div>
+
+                    {/* Quick zoom buttons */}
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      {[
+                        { label: '90%', val: 90 },
+                        { label: '100% ปกติ', val: 100 },
+                        { label: '110%', val: 110 },
+                        { label: '115%', val: 115 },
+                        { label: '120%', val: 120 },
+                        { label: '125%', val: 125 },
+                        { label: '135%', val: 135 },
+                        { label: '150% ขยายใหญ่', val: 150 },
+                      ].map((item) => (
+                        <button
+                          key={item.val}
+                          type="button"
+                          onClick={() => setScalePercent(item.val)}
+                          className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
+                            scalePercent === item.val
+                              ? 'bg-purple-600 text-white shadow-sm'
+                              : 'bg-white border border-purple-200 text-purple-700 hover:bg-purple-50 dark:bg-slate-800 dark:border-slate-700 dark:text-purple-300'
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
                     </div>
                   </div>
 
@@ -716,13 +801,19 @@ export const PageOffsetTool: React.FC = () => {
                       </strong>
                     </span>
                   </span>
-                  <span className="text-[11px] text-slate-400">
-                    โหมด:{' '}
-                    {mode === 'fit-margin'
-                      ? 'ย่อพอดีหน้า'
-                      : mode === 'shift'
-                      ? 'ขยับเนื้อหา'
-                      : 'ขยายกระดาษ'}
+                  <span className="flex items-center gap-2 text-[11px] text-slate-400">
+                    <span>
+                      ขนาด: <strong className="text-purple-600 dark:text-purple-400">{scalePercent}%</strong>
+                    </span>
+                    <span>•</span>
+                    <span>
+                      โหมด:{' '}
+                      {mode === 'fit-margin'
+                        ? 'ย่อพอดีหน้า'
+                        : mode === 'shift'
+                        ? 'ขยับเนื้อหา'
+                        : 'ขยายกระดาษ'}
+                    </span>
                   </span>
                 </div>
 

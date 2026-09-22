@@ -695,6 +695,7 @@ export interface MarginAdjustmentOptions {
   marginRightPt: number;
   marginTopPt?: number;
   marginBottomPt?: number;
+  scalePercent?: number; // 50 - 200%, default 100%
   mode: 'shift' | 'fit-margin' | 'expand';
   isMirrorPages?: boolean;
   pageScope?: 'all' | 'odd' | 'even';
@@ -702,7 +703,7 @@ export interface MarginAdjustmentOptions {
 }
 
 /**
- * Adjust PDF margins or shift page contents horizontally and vertically
+ * Adjust PDF margins or shift and scale page contents horizontally and vertically
  */
 export async function adjustPdfMargins(
   file: File,
@@ -717,14 +718,17 @@ export async function adjustPdfMargins(
     marginRightPt = 0,
     marginTopPt = 0,
     marginBottomPt = 0,
+    scalePercent = 100,
     mode = 'shift',
     isMirrorPages = false,
     pageScope = 'all',
     onProgress,
   } = options;
 
-  if (mode === 'shift') {
-    // Mode 'shift': Direct translation of page content in-place without altering page dimensions
+  const userScaleMult = Math.max(0.2, (scalePercent || 100) / 100);
+
+  // If in 'shift' mode with exactly 100% scale, we can do in-place content translation
+  if (mode === 'shift' && scalePercent === 100) {
     for (let i = 0; i < totalPages; i++) {
       const pageNum = i + 1;
       const isEven = pageNum % 2 === 0;
@@ -748,7 +752,7 @@ export async function adjustPdfMargins(
     return new Blob([pdfBytes as any], { type: 'application/pdf' });
   }
 
-  // Modes 'fit-margin' and 'expand': create new document and embed pages
+  // Modes 'fit-margin', 'expand', or 'shift' with custom scaling: embed pages in new document
   const newDoc = await PDFDocument.create();
 
   for (let i = 0; i < totalPages; i++) {
@@ -777,26 +781,44 @@ export async function adjustPdfMargins(
       right = marginLeftPt;
     }
 
+    const top = marginTopPt || 0;
+    const bottom = marginBottomPt || 0;
+
     if (mode === 'expand') {
       const newWidth = width + Math.max(0, left) + Math.max(0, right);
-      const newHeight = height + Math.max(0, marginTopPt || 0) + Math.max(0, marginBottomPt || 0);
+      const newHeight = height + Math.max(0, top) + Math.max(0, bottom);
       const newPage = newDoc.addPage([newWidth, newHeight]);
       newPage.drawPage(embedded, {
         x: Math.max(0, left),
-        y: Math.max(0, marginBottomPt || 0),
-        width,
-        height,
+        y: Math.max(0, bottom),
+        width: width * userScaleMult,
+        height: height * userScaleMult,
+      });
+    } else if (mode === 'shift') {
+      // Shift with custom scaling
+      const effShiftX = isMirrorPages && isEven ? right - left : left - right;
+      const effShiftY = bottom - top;
+      const drawWidth = width * userScaleMult;
+      const drawHeight = height * userScaleMult;
+      const drawX = (width - drawWidth) / 2 + effShiftX;
+      const drawY = (height - drawHeight) / 2 + effShiftY;
+
+      const newPage = newDoc.addPage([width, height]);
+      newPage.drawPage(embedded, {
+        x: drawX,
+        y: drawY,
+        width: drawWidth,
+        height: drawHeight,
       });
     } else {
-      // 'fit-margin': scale original page inside defined margins
-      const top = marginTopPt || 0;
-      const bottom = marginBottomPt || 0;
+      // 'fit-margin': fit inside margins and apply user scale multiplier
       const availW = Math.max(20, width - (left + right));
       const availH = Math.max(20, height - (top + bottom));
-      const scale = Math.min(availW / width, availH / height);
+      const baseScale = Math.min(availW / width, availH / height);
+      const finalScale = baseScale * userScaleMult;
 
-      const drawWidth = width * scale;
-      const drawHeight = height * scale;
+      const drawWidth = width * finalScale;
+      const drawHeight = height * finalScale;
       const drawX = left + (availW - drawWidth) / 2;
       const drawY = bottom + (availH - drawHeight) / 2;
 
