@@ -25,6 +25,7 @@ import {
   Bot,
   Zap,
   FileEdit,
+  MoveHorizontal,
 } from 'lucide-react';
 import { ToolDefinition, ToolId } from './types';
 import { SiteSettings } from './types/admin';
@@ -61,6 +62,7 @@ import { PdfToWordTool } from './components/tools/PdfToWordTool';
 import { CompressPdfTool } from './components/tools/CompressPdfTool';
 import { CompressImageTool } from './components/tools/CompressImageTool';
 import { CropTool } from './components/tools/CropTool';
+import { PageOffsetTool } from './components/tools/PageOffsetTool';
 import { ProtectTool } from './components/tools/ProtectTool';
 import { ScanTool } from './components/tools/ScanTool';
 import { AnnotateTool } from './components/tools/AnnotateTool';
@@ -293,6 +295,22 @@ const allToolsDefinition: ToolDefinition[] = [
     category: 'pdf',
   },
   {
+    id: 'page-offset',
+    title: 'ขยับระยะหน้า / ปรับขอบ PDF',
+    description: 'ปรับลด-เพิ่มระยะตัวเลขด้านซ้าย (Left) และขวา (Right) สำหรับเข้าเล่ม เจาะรู หรือจัดหน้ากระดาษ',
+    icon: MoveHorizontal,
+    gradientFrom: 'from-sky-100/90 dark:from-sky-950/40',
+    gradientTo: 'to-indigo-50/70 dark:to-indigo-900/20',
+    borderColor: 'border-sky-300 dark:border-sky-800/60',
+    hoverBorder: 'hover:border-sky-500 dark:hover:border-sky-400',
+    iconBgFrom: 'from-sky-600',
+    iconBgTo: 'to-indigo-600',
+    iconColor: 'text-sky-600',
+    badge: 'เข้าเล่ม/เจาะรู 📑',
+    badgeColor: 'bg-sky-100 text-sky-700 dark:bg-sky-900/60 dark:text-sky-300',
+    category: 'pdf',
+  },
+  {
     id: 'protect',
     title: 'ใส่รหัสผ่าน PDF',
     description: 'เข้ารหัสไฟล์ให้ต้องใส่รหัสผ่านก่อนเปิดอ่าน',
@@ -501,6 +519,8 @@ export const App: React.FC = () => {
         return <CompressImageTool />;
       case 'crop':
         return <CropTool />;
+      case 'page-offset':
+        return <PageOffsetTool />;
       case 'protect':
         return <ProtectTool />;
       case 'scan':

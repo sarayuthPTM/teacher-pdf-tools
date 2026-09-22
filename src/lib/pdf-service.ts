@@ -689,3 +689,130 @@ export async function pdfToDocx(
 export function downloadBlob(blob: Blob, filename: string) {
   saveAs(blob, filename);
 }
+
+export interface MarginAdjustmentOptions {
+  marginLeftPt: number;
+  marginRightPt: number;
+  marginTopPt?: number;
+  marginBottomPt?: number;
+  mode: 'shift' | 'fit-margin' | 'expand';
+  isMirrorPages?: boolean;
+  pageScope?: 'all' | 'odd' | 'even';
+  onProgress?: (current: number, total: number) => void;
+}
+
+/**
+ * Adjust PDF margins or shift page contents horizontally and vertically
+ */
+export async function adjustPdfMargins(
+  file: File,
+  options: MarginAdjustmentOptions
+): Promise<Blob> {
+  const arrayBuffer = await file.arrayBuffer();
+  const sourceDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+  const totalPages = sourceDoc.getPageCount();
+
+  const {
+    marginLeftPt = 0,
+    marginRightPt = 0,
+    marginTopPt = 0,
+    marginBottomPt = 0,
+    mode = 'shift',
+    isMirrorPages = false,
+    pageScope = 'all',
+    onProgress,
+  } = options;
+
+  if (mode === 'shift') {
+    // Mode 'shift': Direct translation of page content in-place without altering page dimensions
+    for (let i = 0; i < totalPages; i++) {
+      const pageNum = i + 1;
+      const isEven = pageNum % 2 === 0;
+
+      if (pageScope === 'odd' && isEven) continue;
+      if (pageScope === 'even' && !isEven) continue;
+
+      let effShiftX = marginLeftPt - marginRightPt;
+      if (isMirrorPages && isEven) {
+        effShiftX = marginRightPt - marginLeftPt;
+      }
+      const effShiftY = (marginBottomPt || 0) - (marginTopPt || 0);
+
+      const page = sourceDoc.getPage(i);
+      page.translateContent(effShiftX, effShiftY);
+
+      if (onProgress) onProgress(pageNum, totalPages);
+    }
+
+    const pdfBytes = await sourceDoc.save();
+    return new Blob([pdfBytes as any], { type: 'application/pdf' });
+  }
+
+  // Modes 'fit-margin' and 'expand': create new document and embed pages
+  const newDoc = await PDFDocument.create();
+
+  for (let i = 0; i < totalPages; i++) {
+    const pageNum = i + 1;
+    const isEven = pageNum % 2 === 0;
+    const origPage = sourceDoc.getPage(i);
+    const { width, height } = origPage.getSize();
+    const [embedded] = await newDoc.embedPages([origPage]);
+
+    const shouldModify =
+      pageScope === 'all' ||
+      (pageScope === 'odd' && !isEven) ||
+      (pageScope === 'even' && isEven);
+
+    if (!shouldModify) {
+      const newPage = newDoc.addPage([width, height]);
+      newPage.drawPage(embedded, { x: 0, y: 0, width, height });
+      if (onProgress) onProgress(pageNum, totalPages);
+      continue;
+    }
+
+    let left = marginLeftPt;
+    let right = marginRightPt;
+    if (isMirrorPages && isEven) {
+      left = marginRightPt;
+      right = marginLeftPt;
+    }
+
+    if (mode === 'expand') {
+      const newWidth = width + Math.max(0, left) + Math.max(0, right);
+      const newHeight = height + Math.max(0, marginTopPt || 0) + Math.max(0, marginBottomPt || 0);
+      const newPage = newDoc.addPage([newWidth, newHeight]);
+      newPage.drawPage(embedded, {
+        x: Math.max(0, left),
+        y: Math.max(0, marginBottomPt || 0),
+        width,
+        height,
+      });
+    } else {
+      // 'fit-margin': scale original page inside defined margins
+      const top = marginTopPt || 0;
+      const bottom = marginBottomPt || 0;
+      const availW = Math.max(20, width - (left + right));
+      const availH = Math.max(20, height - (top + bottom));
+      const scale = Math.min(availW / width, availH / height);
+
+      const drawWidth = width * scale;
+      const drawHeight = height * scale;
+      const drawX = left + (availW - drawWidth) / 2;
+      const drawY = bottom + (availH - drawHeight) / 2;
+
+      const newPage = newDoc.addPage([width, height]);
+      newPage.drawPage(embedded, {
+        x: drawX,
+        y: drawY,
+        width: drawWidth,
+        height: drawHeight,
+      });
+    }
+
+    if (onProgress) onProgress(pageNum, totalPages);
+  }
+
+  const pdfBytes = await newDoc.save();
+  return new Blob([pdfBytes as any], { type: 'application/pdf' });
+}
+

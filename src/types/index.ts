@@ -20,7 +20,8 @@ export type ToolId =
   | 'sign'
   | 'annotate'
   | 'qr-code'
-  | 'pdf-to-word';
+  | 'pdf-to-word'
+  | 'page-offset';
 
 export interface ToolDefinition {
   id: ToolId;
