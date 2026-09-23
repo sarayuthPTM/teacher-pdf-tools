@@ -19,6 +19,7 @@ import {
   Eye,
   Plus,
   Zap,
+  ZapOff,
   FileCheck,
   Maximize2,
   Minimize2,
@@ -29,6 +30,10 @@ import {
   Share2,
   FileImage,
   Send,
+  Scan,
+  RefreshCw,
+  CreditCard,
+  BookOpen,
 } from 'lucide-react';
 import { FileDropzone } from '../ui/FileDropzone';
 import { PDFDocument } from 'pdf-lib';
@@ -37,6 +42,7 @@ import { saveAs } from 'file-saver';
 import { downloadBlob } from '../../lib/pdf-service';
 
 export type ScannerFilter = 'original' | 'photo' | 'document' | 'magic' | 'color' | 'bw';
+export type ScanMode = 'single' | 'batch' | 'idcard' | 'passport';
 
 export interface CornerPoints {
   tl: { x: number; y: number }; // Percentage (0 - 100)
@@ -62,18 +68,30 @@ export const ScanTool: React.FC = () => {
   const [pages, setPages] = useState<ScannedPage[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Workflow State: 'gallery' | 'crop' | 'filter'
-  const [activeStep, setActiveStep] = useState<'gallery' | 'crop' | 'filter'>('gallery');
+  // Workflow State: 'gallery' | 'camera' | 'crop' | 'filter'
+  const [activeStep, setActiveStep] = useState<'gallery' | 'camera' | 'crop' | 'filter'>('gallery');
   const [currentEditingIndex, setCurrentEditingIndex] = useState<number | null>(null);
 
-  // Crop / Perspective State
+  // Live Camera State (Photo 1)
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const captureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraMode, setCameraMode] = useState<ScanMode>('single');
+  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
+  const [isTorchOn, setIsTorchOn] = useState<boolean>(false);
+  const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [isFlashEffect, setIsFlashEffect] = useState<boolean>(false);
+
+  // Crop / Perspective State (Photo 2)
   const [rawSourceImage, setRawSourceImage] = useState<string>('');
   const [cropRotation, setCropRotation] = useState<number>(0);
+  const [isFullCrop, setIsFullCrop] = useState<boolean>(false);
   const [corners, setCorners] = useState<CornerPoints>({
-    tl: { x: 8, y: 8 },
-    tr: { x: 92, y: 8 },
-    br: { x: 92, y: 92 },
-    bl: { x: 8, y: 92 },
+    tl: { x: 10, y: 8 },
+    tr: { x: 90, y: 8 },
+    br: { x: 88, y: 92 },
+    bl: { x: 12, y: 92 },
   });
   const [activeDraggingHandle, setActiveDraggingHandle] = useState<
     'tl' | 'tr' | 'br' | 'bl' | 'tm' | 'rm' | 'bm' | 'lm' | null
@@ -91,8 +109,143 @@ export const ScanTool: React.FC = () => {
   const cropContainerRef = useRef<HTMLDivElement>(null);
 
   /**
+   * Camera Hardware Control
+   */
+  const startCamera = async (facing: 'environment' | 'user' = facingMode) => {
+    stopCamera();
+    setCameraError(null);
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('เบราว์เซอร์นี้ไม่รองรับการเปิดกล้องโดยตรง กรุณาเลือกรูปภาพจากเครื่อง');
+      }
+
+      const constraints: MediaStreamConstraints = {
+        video: {
+          facingMode: { ideal: facing },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+        audio: false,
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      setCameraStream(stream);
+      setHasCameraPermission(true);
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => {});
+      }
+    } catch (err: any) {
+      console.warn('Camera start error:', err);
+      setHasCameraPermission(false);
+      setCameraError(err.message || 'ไม่สามารถเปิดกล้องได้ กรุณาอนุญาตการเข้าถึงกล้อง หรือเลือกรูปภาพจากเครื่อง');
+    }
+  };
+
+  const stopCamera = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((track) => track.stop());
+      setCameraStream(null);
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setIsTorchOn(false);
+  };
+
+  const handleOpenLiveCamera = (mode: ScanMode = 'single') => {
+    setCameraMode(mode);
+    setActiveStep('camera');
+    startCamera(facingMode);
+  };
+
+  const toggleCameraFacing = () => {
+    const nextFacing = facingMode === 'environment' ? 'user' : 'environment';
+    setFacingMode(nextFacing);
+    startCamera(nextFacing);
+  };
+
+  const toggleTorch = async () => {
+    if (!cameraStream) return;
+    const track = cameraStream.getVideoTracks()[0];
+    if (track && 'applyConstraints' in track) {
+      try {
+        const nextTorch = !isTorchOn;
+        await (track as any).applyConstraints({
+          advanced: [{ torch: nextTorch }],
+        });
+        setIsTorchOn(nextTorch);
+      } catch (e) {
+        console.warn('Torch not supported:', e);
+      }
+    }
+  };
+
+  const capturePhoto = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    setIsFlashEffect(true);
+    setTimeout(() => setIsFlashEffect(false), 200);
+
+    const w = video.videoWidth || 1920;
+    const h = video.videoHeight || 1080;
+
+    const canvas = captureCanvasRef.current || document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.drawImage(video, 0, 0, w, h);
+    const photoDataUrl = canvas.toDataURL('image/jpeg', 0.95);
+
+    setRawSourceImage(photoDataUrl);
+    setCropRotation(0);
+    setIsFullCrop(false);
+
+    if (cameraMode === 'idcard') {
+      setCorners({
+        tl: { x: 15, y: 30 },
+        tr: { x: 85, y: 30 },
+        br: { x: 85, y: 70 },
+        bl: { x: 15, y: 70 },
+      });
+    } else if (cameraMode === 'passport') {
+      setCorners({
+        tl: { x: 20, y: 15 },
+        tr: { x: 80, y: 15 },
+        br: { x: 80, y: 85 },
+        bl: { x: 20, y: 85 },
+      });
+    } else {
+      setCorners({
+        tl: { x: 10, y: 8 },
+        tr: { x: 90, y: 8 },
+        br: { x: 88, y: 92 },
+        bl: { x: 12, y: 92 },
+      });
+    }
+
+    stopCamera();
+    setActiveStep('crop');
+  };
+
+  const handleExitCamera = () => {
+    stopCamera();
+    setActiveStep('gallery');
+  };
+
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, []);
+
+  /**
    * Perspective Transform / Homography Warp algorithm
-   * Warps an arbitrary quadrilateral into a clean flat rectangular document
    */
   const warpPerspective = (sourceDataUrl: string, cornerPts: CornerPoints): Promise<string> => {
     return new Promise((resolve) => {
@@ -219,7 +372,6 @@ export const ScanTool: React.FC = () => {
 
           if (filterMode === 'magic') {
             // Clear Scanner "ชัดเจน (Magic Color)":
-            // Whiten page background shadow, boost contrast of text and color seals
             const threshold = Math.max(90, 165 - shadowThreshold * 0.85);
             if (lum > threshold) {
               const boost = (lum - threshold) / (255 - threshold);
@@ -227,7 +379,6 @@ export const ScanTool: React.FC = () => {
               g = Math.min(255, g + (255 - g) * (0.65 + boost * 0.35));
               b = Math.min(255, b + (255 - b) * (0.65 + boost * 0.35));
             } else {
-              // Darken text/ink slightly for crisp reading
               r = Math.max(0, r * 0.85);
               g = Math.max(0, g * 0.85);
               b = Math.max(0, b * 0.85);
@@ -237,7 +388,6 @@ export const ScanTool: React.FC = () => {
             b = factor * (b - 128) + 128 + bright;
           } else if (filterMode === 'document') {
             // Clear Scanner "เอกสาร (Document)":
-            // Clean paper with balanced grayscale text
             const threshold = Math.max(80, 155 - shadowThreshold * 0.7);
             if (lum > threshold) {
               const clean = Math.min(255, lum + (255 - lum) * 0.8);
@@ -254,17 +404,14 @@ export const ScanTool: React.FC = () => {
             g = factor * (g - 128) + 128 + bright;
             b = factor * (b - 128) + 128 + bright;
           } else if (filterMode === 'photo') {
-            // Clear Scanner "รูปภาพ (Photo)": Natural colors with balanced lighting
             r = factor * (r - 128) + 128 + bright + 5;
             g = factor * (g - 128) + 128 + bright + 5;
             b = factor * (b - 128) + 128 + bright + 5;
           } else if (filterMode === 'color') {
-            // Clear Scanner "สี (Vibrant Color)": Boost saturation and contrast
             r = factor * (r - 128) + 128 + bright + 15;
             g = factor * (g - 128) + 128 + bright + 15;
             b = factor * (b - 128) + 128 + bright + 15;
           } else if (filterMode === 'bw') {
-            // High contrast B&W Scan
             const threshold = 135 + shadowThreshold * 0.6;
             const v = lum > threshold ? 255 : 0;
             r = v;
@@ -295,11 +442,12 @@ export const ScanTool: React.FC = () => {
         const raw = e.target.result as string;
         setRawSourceImage(raw);
         setCropRotation(0);
+        setIsFullCrop(false);
         setCorners({
-          tl: { x: 10, y: 10 },
-          tr: { x: 90, y: 10 },
-          br: { x: 90, y: 90 },
-          bl: { x: 10, y: 90 },
+          tl: { x: 10, y: 8 },
+          tr: { x: 90, y: 8 },
+          br: { x: 88, y: 92 },
+          bl: { x: 12, y: 92 },
         });
         setCurrentEditingIndex(null);
         setActiveStep('crop');
@@ -319,7 +467,10 @@ export const ScanTool: React.FC = () => {
   /**
    * Drag handle interaction for Corner & Edge adjustment
    */
-  const handleDragStart = (handle: 'tl' | 'tr' | 'br' | 'bl' | 'tm' | 'rm' | 'bm' | 'lm', e: React.MouseEvent | React.TouchEvent) => {
+  const handleDragStart = (
+    handle: 'tl' | 'tr' | 'br' | 'bl' | 'tm' | 'rm' | 'bm' | 'lm',
+    e: React.MouseEvent | React.TouchEvent
+  ) => {
     e.stopPropagation();
     setActiveDraggingHandle(handle);
   };
@@ -409,17 +560,14 @@ export const ScanTool: React.FC = () => {
   const handleConfirmCrop = async () => {
     try {
       setIsProcessing(true);
-      // First, rotate raw source if needed
       let srcToWarp = rawSourceImage;
       if (cropRotation !== 0) {
         srcToWarp = await applyClearScannerFilters(rawSourceImage, 'original', 0, 1.0, 0, cropRotation);
       }
 
-      // Warp quadrilateral to flat rectangle
       const warped = await warpPerspective(srcToWarp, corners);
       setWarpedImage(warped);
 
-      // Apply initial filter
       const processed = await applyClearScannerFilters(warped, activeFilter, brightness, contrast, shadowClean, 0);
       setPreviewResultUrl(processed);
       setActiveStep('filter');
@@ -461,12 +609,17 @@ export const ScanTool: React.FC = () => {
 
     if (currentEditingIndex !== null) {
       setPages((prev) => prev.map((p, i) => (i === currentEditingIndex ? newPage : p)));
+      setActiveStep('gallery');
+      setCurrentEditingIndex(null);
     } else {
       setPages((prev) => [...prev, newPage]);
+      if (cameraMode === 'batch') {
+        setActiveStep('camera');
+        startCamera(facingMode);
+      } else {
+        setActiveStep('gallery');
+      }
     }
-
-    setActiveStep('gallery');
-    setCurrentEditingIndex(null);
   };
 
   /**
@@ -527,11 +680,9 @@ export const ScanTool: React.FC = () => {
     try {
       setIsProcessing(true);
       if (pages.length === 1) {
-        // Single image: direct JPG download
         const blob = await fetch(pages[0].processedDataUrl).then((r) => r.blob());
         saveAs(blob, `scanned_image_${Date.now()}.jpg`);
       } else {
-        // Multiple images: bundle into ZIP
         const zip = new JSZip();
         for (let i = 0; i < pages.length; i++) {
           const blob = await fetch(pages[i].processedDataUrl).then((r) => r.blob());
@@ -549,7 +700,7 @@ export const ScanTool: React.FC = () => {
   };
 
   /**
-   * Share Scanned Document to LINE / AirDrop / Google Drive / Email / Notes / Files
+   * Share Scanned Document
    */
   const handleShare = async () => {
     if (pages.length === 0) return;
@@ -585,7 +736,6 @@ export const ScanTool: React.FC = () => {
           url: window.location.href,
         });
       } else {
-        // Fallback: download PDF
         downloadBlob(new Blob([pdfBytes as any], { type: 'application/pdf' }), `scanned_doc_${Date.now()}.pdf`);
       }
     } catch (err: any) {
@@ -609,21 +759,235 @@ export const ScanTool: React.FC = () => {
   return (
     <div className="mx-auto max-w-6xl">
       {/* ------------------------------------------------------------- */}
-      {/* STEP 1: CROP & PERSPECTIVE ADJUSTMENT ("การปรับขอบเขต") */}
+      {/* STEP 0: LIVE CAMERA SCANNER VIEW (เหมือน Clear Scanner รูปที่ 1) */}
       {/* ------------------------------------------------------------- */}
-      {activeStep === 'crop' && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-[#1c292f] text-white">
+      {activeStep === 'camera' && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-black text-white select-none">
           {/* Top Bar */}
-          <div className="flex h-14 items-center justify-between border-b border-slate-700/60 px-4">
+          <div className="flex h-14 items-center justify-between px-4 z-20 bg-gradient-to-b from-black/80 to-transparent">
             <button
               type="button"
-              onClick={() => setActiveStep(pages.length > 0 ? 'gallery' : 'gallery')}
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-800 text-slate-300 hover:bg-slate-700"
+              onClick={handleExitCamera}
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white/90 backdrop-blur-md hover:bg-black/80 transition"
+              title="ปิดกล้อง"
             >
               <X className="h-5 w-5" />
             </button>
-            <span className="text-sm font-semibold tracking-wide text-slate-100">
-              การปรับขอบเขต (ดึงมุม 4 จุดได้อย่างอิสระ)
+
+            <span className="text-xs font-semibold tracking-wider text-white/90 bg-black/40 px-3 py-1 rounded-full backdrop-blur-md">
+              {cameraMode === 'single'
+                ? 'หน้าเดียว'
+                : cameraMode === 'batch'
+                ? `หลายหน้า (${pages.length} หน้า)`
+                : cameraMode === 'idcard'
+                ? 'บัตรประจำตัว'
+                : 'หนังสือเดินทาง'}
+            </span>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={toggleTorch}
+                className={`flex h-9 w-9 items-center justify-center rounded-full backdrop-blur-md transition ${
+                  isTorchOn ? 'bg-amber-400 text-slate-900 shadow-md' : 'bg-black/50 text-white/90 hover:bg-black/80'
+                }`}
+                title="ไฟฉาย"
+              >
+                {isTorchOn ? <Zap className="h-5 w-5 fill-current" /> : <ZapOff className="h-5 w-5" />}
+              </button>
+
+              <button
+                type="button"
+                onClick={toggleCameraFacing}
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white/90 backdrop-blur-md hover:bg-black/80 transition"
+                title="สลับกล้องหน้า/หลัง"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Camera Viewfinder & Simulated Cyan Document Detection Overlay */}
+          <div className="relative flex-1 overflow-hidden flex items-center justify-center bg-black">
+            {cameraError ? (
+              <div className="max-w-md p-6 text-center text-white/90">
+                <Camera className="mx-auto h-12 w-12 text-rose-400 mb-3 opacity-80" />
+                <p className="text-sm font-semibold mb-2">ไม่สามารถเข้าถึงกล้องถ่ายรูปได้</p>
+                <p className="text-xs text-slate-400 mb-4">{cameraError}</p>
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => startCamera(facingMode)}
+                    className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700 transition"
+                  >
+                    ลองใหม่อีกครั้ง
+                  </button>
+                  <label className="cursor-pointer rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition">
+                    เลือกรูปภาพจากเครื่องแทน
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files[0]) {
+                          stopCamera();
+                          handleFilesSelected(Array.from(e.target.files));
+                        }
+                      }}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+              </div>
+            ) : (
+              <>
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="h-full w-full object-cover"
+                />
+                <canvas ref={captureCanvasRef} className="hidden" />
+
+                {/* Shutter flash effect */}
+                {isFlashEffect && <div className="absolute inset-0 z-30 bg-white animate-out fade-out duration-200" />}
+
+                {/* Simulated Document Cyan Detection Highlight Overlay (Matching Image 1 cyan paper!) */}
+                <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-6">
+                  {cameraMode === 'idcard' ? (
+                    <div className="relative w-full max-w-[340px] aspect-[8.5/5.4] rounded-2xl border-2 border-cyan-400/90 bg-cyan-400/15 shadow-[0_0_20px_rgba(34,211,238,0.3)] flex flex-col items-center justify-center backdrop-blur-[1px]">
+                      <CreditCard className="h-8 w-8 text-cyan-300 opacity-80 mb-1" />
+                      <span className="text-[11px] font-bold text-cyan-200 drop-shadow">วางบัตรประชาชน / ใบขับขี่ในกรอบ</span>
+                    </div>
+                  ) : cameraMode === 'passport' ? (
+                    <div className="relative w-full max-w-[320px] aspect-[3/4] rounded-2xl border-2 border-cyan-400/90 bg-cyan-400/15 shadow-[0_0_20px_rgba(34,211,238,0.3)] flex flex-col items-center justify-center backdrop-blur-[1px]">
+                      <BookOpen className="h-8 w-8 text-cyan-300 opacity-80 mb-1" />
+                      <span className="text-[11px] font-bold text-cyan-200 drop-shadow">วางหนังสือเดินทางในกรอบ</span>
+                    </div>
+                  ) : (
+                    /* Document Cyan Polygon (Matching Image 1 cyan paper!) */
+                    <div className="relative w-[78%] max-w-[420px] aspect-[1/1.38] rounded-xl border-2 border-cyan-400/80 bg-cyan-400/20 shadow-[0_0_25px_rgba(34,211,238,0.25)] flex flex-col items-center justify-center backdrop-blur-[1px] animate-pulse">
+                      <div className="absolute top-2 left-2 w-4 h-4 border-t-2 border-l-2 border-cyan-300" />
+                      <div className="absolute top-2 right-2 w-4 h-4 border-t-2 border-r-2 border-cyan-300" />
+                      <div className="absolute bottom-2 left-2 w-4 h-4 border-b-2 border-l-2 border-cyan-300" />
+                      <div className="absolute bottom-2 right-2 w-4 h-4 border-b-2 border-r-2 border-cyan-300" />
+                      <span className="text-[11px] font-bold text-cyan-100 drop-shadow bg-black/40 px-3 py-1 rounded-full">
+                        ตรวจพบเอกสารอัตโนมัติ
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Bottom Area: Controls & Mode Switcher (Matching Clear Scanner Photo 1) */}
+          <div className="z-20 bg-gradient-to-t from-black via-black/95 to-black/60 pb-6 pt-3 px-4 flex flex-col gap-4">
+            {/* Mode Switcher Tabs */}
+            <div className="flex items-center justify-around text-xs tracking-wide">
+              {[
+                { id: 'single' as ScanMode, label: 'หน้าเดียว' },
+                { id: 'batch' as ScanMode, label: 'หลายหน้า' },
+                { id: 'idcard' as ScanMode, label: 'บัตรประจำตัว' },
+                { id: 'passport' as ScanMode, label: 'หนังสือเดินทาง' },
+              ].map((m) => {
+                const isActive = cameraMode === m.id;
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setCameraMode(m.id)}
+                    className={`relative py-1 font-semibold transition ${
+                      isActive ? 'text-white font-bold' : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <span>{m.label}</span>
+                    {isActive && (
+                      <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-teal-400 rounded-full shadow-[0_0_8px_rgba(45,212,191,0.8)]" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Shutter Button and Gallery / Done shortcuts */}
+            <div className="flex items-center justify-between px-6">
+              {/* Left: Gallery Import */}
+              <label
+                className="flex flex-col items-center gap-1 cursor-pointer text-slate-300 hover:text-white transition active:scale-95"
+                title="เลือกรูปจากคลังภาพ"
+              >
+                <div className="flex h-11 w-11 items-center justify-center rounded-full bg-slate-800/90 border border-slate-700 shadow-md">
+                  <ImageIcon className="h-5 w-5 text-emerald-400" />
+                </div>
+                <span className="text-[10px]">คลังภาพ</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      stopCamera();
+                      handleFilesSelected(Array.from(e.target.files));
+                    }
+                  }}
+                  className="hidden"
+                />
+              </label>
+
+              {/* Center: Big Clear Scanner Shutter Button */}
+              <button
+                type="button"
+                onClick={capturePhoto}
+                disabled={Boolean(cameraError)}
+                className="group relative flex h-20 w-20 items-center justify-center rounded-full border-4 border-white/80 bg-black/40 shadow-2xl transition hover:scale-105 active:scale-95 disabled:opacity-40"
+                title="กดถ่ายสแกนเอกสาร"
+              >
+                <div className="h-16 w-16 rounded-full bg-[#00897b] group-hover:bg-[#00796b] shadow-inner transition flex items-center justify-center">
+                  <div className="h-14 w-14 rounded-full border border-white/30" />
+                </div>
+              </button>
+
+              {/* Right: Done button or thumbnail in batch mode */}
+              {cameraMode === 'batch' && pages.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={handleExitCamera}
+                  className="flex flex-col items-center gap-1 text-emerald-400 hover:text-emerald-300 transition active:scale-95"
+                  title="ดูเอกสารทั้งหมดที่สแกน"
+                >
+                  <div className="relative flex h-11 w-11 items-center justify-center rounded-full bg-emerald-600 text-white shadow-md font-bold text-xs ring-2 ring-emerald-400">
+                    {pages.length}
+                  </div>
+                  <span className="text-[10px] font-bold">เสร็จสิ้น</span>
+                </button>
+              ) : (
+                <div className="w-11" />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* STEP 1: CROP & PERSPECTIVE ADJUSTMENT ("การปรับขอบเขต" รูปที่ 2) */}
+      {/* ------------------------------------------------------------- */}
+      {activeStep === 'crop' && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-[#132627] text-white select-none">
+          {/* Top Bar (Matching Photo 2) */}
+          <div className="flex h-14 items-center justify-between border-b border-slate-700/50 bg-[#162a2b] px-4">
+            <button
+              type="button"
+              onClick={() => {
+                if (pages.length > 0) setActiveStep('gallery');
+                else handleOpenLiveCamera(cameraMode);
+              }}
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-800/80 text-slate-300 hover:bg-slate-700 transition"
+              title="ยกเลิก"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <span className="text-sm font-bold tracking-wide text-white">
+              การปรับขอบเขต
             </span>
             <div className="w-9" />
           </div>
@@ -660,7 +1024,7 @@ export const ScanTool: React.FC = () => {
                 {/* Semi-transparent green highlighted document area */}
                 <polygon
                   points={`${corners.tl.x},${corners.tl.y} ${corners.tr.x},${corners.tr.y} ${corners.br.x},${corners.br.y} ${corners.bl.x},${corners.bl.y}`}
-                  fill="rgba(34, 197, 94, 0.15)"
+                  fill="rgba(34, 197, 94, 0.12)"
                 />
 
                 {/* 3x3 Grid Guidelines (Clear Scanner style) */}
@@ -670,9 +1034,9 @@ export const ScanTool: React.FC = () => {
                   x2={corners.tr.x + (corners.br.x - corners.tr.x) / 3}
                   y2={corners.tr.y + (corners.br.y - corners.tr.y) / 3}
                   stroke="#22c55e"
-                  strokeWidth="0.5"
+                  strokeWidth="0.6"
                   strokeDasharray="1.5,1.5"
-                  opacity="0.85"
+                  opacity="0.8"
                   vectorEffect="non-scaling-stroke"
                 />
                 <line
@@ -681,9 +1045,9 @@ export const ScanTool: React.FC = () => {
                   x2={corners.tr.x + ((corners.br.x - corners.tr.x) * 2) / 3}
                   y2={corners.tr.y + ((corners.br.y - corners.tr.y) * 2) / 3}
                   stroke="#22c55e"
-                  strokeWidth="0.5"
+                  strokeWidth="0.6"
                   strokeDasharray="1.5,1.5"
-                  opacity="0.85"
+                  opacity="0.8"
                   vectorEffect="non-scaling-stroke"
                 />
                 <line
@@ -692,9 +1056,9 @@ export const ScanTool: React.FC = () => {
                   x2={corners.bl.x + (corners.br.x - corners.bl.x) / 3}
                   y2={corners.bl.y + (corners.br.y - corners.bl.y) / 3}
                   stroke="#22c55e"
-                  strokeWidth="0.5"
+                  strokeWidth="0.6"
                   strokeDasharray="1.5,1.5"
-                  opacity="0.85"
+                  opacity="0.8"
                   vectorEffect="non-scaling-stroke"
                 />
                 <line
@@ -703,9 +1067,9 @@ export const ScanTool: React.FC = () => {
                   x2={corners.bl.x + ((corners.br.x - corners.bl.x) * 2) / 3}
                   y2={corners.bl.y + ((corners.br.y - corners.bl.y) * 2) / 3}
                   stroke="#22c55e"
-                  strokeWidth="0.5"
+                  strokeWidth="0.6"
                   strokeDasharray="1.5,1.5"
-                  opacity="0.85"
+                  opacity="0.8"
                   vectorEffect="non-scaling-stroke"
                 />
 
@@ -716,7 +1080,7 @@ export const ScanTool: React.FC = () => {
                   x2={corners.tr.x}
                   y2={corners.tr.y}
                   stroke="#22c55e"
-                  strokeWidth="1.2"
+                  strokeWidth="1.5"
                   vectorEffect="non-scaling-stroke"
                 />
                 <line
@@ -725,7 +1089,7 @@ export const ScanTool: React.FC = () => {
                   x2={corners.br.x}
                   y2={corners.br.y}
                   stroke="#22c55e"
-                  strokeWidth="1.2"
+                  strokeWidth="1.5"
                   vectorEffect="non-scaling-stroke"
                 />
                 <line
@@ -734,7 +1098,7 @@ export const ScanTool: React.FC = () => {
                   x2={corners.bl.x}
                   y2={corners.bl.y}
                   stroke="#22c55e"
-                  strokeWidth="1.2"
+                  strokeWidth="1.5"
                   vectorEffect="non-scaling-stroke"
                 />
                 <line
@@ -743,17 +1107,17 @@ export const ScanTool: React.FC = () => {
                   x2={corners.tl.x}
                   y2={corners.tl.y}
                   stroke="#22c55e"
-                  strokeWidth="1.2"
+                  strokeWidth="1.5"
                   vectorEffect="non-scaling-stroke"
                 />
               </svg>
 
-              {/* 4 Corner Handles (Draggable) */}
+              {/* 4 Corner Handles - Green Circles (Matching Image 2) */}
               {[
-                { id: 'tl', pos: corners.tl, label: 'มุมบนซ้าย' },
-                { id: 'tr', pos: corners.tr, label: 'มุมบนขวา' },
-                { id: 'br', pos: corners.br, label: 'มุมล่างขวา' },
-                { id: 'bl', pos: corners.bl, label: 'มุมล่างซ้าย' },
+                { id: 'tl', pos: corners.tl },
+                { id: 'tr', pos: corners.tr },
+                { id: 'br', pos: corners.br },
+                { id: 'bl', pos: corners.bl },
               ].map((h) => (
                 <div
                   key={h.id}
@@ -764,15 +1128,15 @@ export const ScanTool: React.FC = () => {
                     top: `${h.pos.y}%`,
                     transform: 'translate(-50%, -50%)',
                   }}
-                  className="absolute z-20 flex h-9 w-9 cursor-grab items-center justify-center active:cursor-grabbing"
+                  className="absolute z-20 flex h-10 w-10 cursor-grab items-center justify-center active:cursor-grabbing"
                 >
-                  <div className="flex h-5 w-5 items-center justify-center rounded-full border-2 border-white bg-emerald-500 shadow-md ring-4 ring-emerald-500/40">
-                    <div className="h-1.5 w-1.5 rounded-full bg-white" />
+                  <div className="h-7 w-7 rounded-full border-[2.5px] border-[#22c55e] bg-emerald-500/25 shadow-lg flex items-center justify-center backdrop-blur-xs">
+                    <div className="h-2 w-2 rounded-full bg-[#22c55e]" />
                   </div>
                 </div>
               ))}
 
-              {/* 4 Edge Midpoint Handles (Draggable) */}
+              {/* 4 Edge Midpoint Handles - Green Squares (Matching Image 2) */}
               {[
                 { id: 'tm', pos: midpoints.tm },
                 { id: 'rm', pos: midpoints.rm },
@@ -788,77 +1152,73 @@ export const ScanTool: React.FC = () => {
                     top: `${m.pos.y}%`,
                     transform: 'translate(-50%, -50%)',
                   }}
-                  className="absolute z-10 flex h-7 w-7 cursor-grab items-center justify-center active:cursor-grabbing"
+                  className="absolute z-10 flex h-8 w-8 cursor-grab items-center justify-center active:cursor-grabbing"
                 >
-                  <div className="h-3 w-3 rounded-full border-2 border-white bg-emerald-400 shadow-sm" />
+                  <div className="h-4 w-4 bg-[#22c55e] border border-white shadow-md rounded-[2px]" />
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Bottom Toolbar (Matching Clear Scanner App) */}
-          <div className="flex h-20 items-center justify-around border-t border-slate-700/60 bg-[#162126] px-4">
+          {/* Bottom Toolbar (Matching Clear Scanner App Photo 2: 4 Buttons) */}
+          <div className="flex h-20 items-center justify-around border-t border-slate-700/50 bg-[#0f1f21] px-6">
+            {/* 1. Full-frame / Auto Crop */}
             <button
               type="button"
-              onClick={() =>
-                setCorners({
-                  tl: { x: 0, y: 0 },
-                  tr: { x: 100, y: 0 },
-                  br: { x: 100, y: 100 },
-                  bl: { x: 0, y: 100 },
-                })
-              }
-              className="flex flex-col items-center gap-1 text-slate-300 hover:text-white"
-              title="เต็มรูป"
+              onClick={() => {
+                if (isFullCrop) {
+                  setCorners({
+                    tl: { x: 10, y: 8 },
+                    tr: { x: 90, y: 8 },
+                    br: { x: 88, y: 92 },
+                    bl: { x: 12, y: 92 },
+                  });
+                  setIsFullCrop(false);
+                } else {
+                  setCorners({
+                    tl: { x: 0, y: 0 },
+                    tr: { x: 100, y: 0 },
+                    br: { x: 100, y: 100 },
+                    bl: { x: 0, y: 100 },
+                  });
+                  setIsFullCrop(true);
+                }
+              }}
+              className="flex flex-col items-center gap-1 text-slate-300 hover:text-white active:scale-95 transition"
+              title={isFullCrop ? 'กรอบเอกสาร' : 'เต็มรูป'}
             >
-              <Maximize2 className="h-5 w-5" />
-              <span className="text-[10px]">เต็มรูป</span>
+              <Scan className="h-6 w-6 stroke-[2.2]" />
             </button>
 
-            <button
-              type="button"
-              onClick={() =>
-                setCorners({
-                  tl: { x: 8, y: 8 },
-                  tr: { x: 92, y: 8 },
-                  br: { x: 92, y: 92 },
-                  bl: { x: 8, y: 92 },
-                })
-              }
-              className="flex flex-col items-center gap-1 text-slate-300 hover:text-white"
-              title="รีเซ็ตกรอบ"
-            >
-              <Minimize2 className="h-5 w-5" />
-              <span className="text-[10px]">รีเซ็ตกรอบ</span>
-            </button>
-
+            {/* 2. Rotate Left */}
             <button
               type="button"
               onClick={() => rotateSourceImage(-90)}
-              className="flex flex-col items-center gap-1 text-slate-300 hover:text-white"
+              className="flex flex-col items-center gap-1 text-slate-300 hover:text-white active:scale-95 transition"
               title="หมุนซ้าย"
             >
-              <RotateCcw className="h-5 w-5" />
-              <span className="text-[10px]">หมุนซ้าย</span>
+              <RotateCcw className="h-6 w-6 stroke-[2.2]" />
             </button>
 
+            {/* 3. Rotate Right */}
             <button
               type="button"
               onClick={() => rotateSourceImage(90)}
-              className="flex flex-col items-center gap-1 text-slate-300 hover:text-white"
+              className="flex flex-col items-center gap-1 text-slate-300 hover:text-white active:scale-95 transition"
               title="หมุนขวา"
             >
-              <RotateCw className="h-5 w-5" />
-              <span className="text-[10px]">หมุนขวา</span>
+              <RotateCw className="h-6 w-6 stroke-[2.2]" />
             </button>
 
+            {/* 4. Confirm Checkmark */}
             <button
               type="button"
               disabled={isProcessing}
               onClick={handleConfirmCrop}
-              className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg transition hover:bg-emerald-600 active:scale-95 disabled:opacity-50"
+              className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg transition hover:bg-emerald-600 active:scale-90 disabled:opacity-50"
+              title="ยืนยันการปรับขอบเขต"
             >
-              {isProcessing ? <Loader2 className="h-6 w-6 animate-spin" /> : <Check className="h-6 w-6 stroke-[3]" />}
+              {isProcessing ? <Loader2 className="h-6 w-6 animate-spin" /> : <Check className="h-7 w-7 stroke-[3]" />}
             </button>
           </div>
         </div>
@@ -868,13 +1228,13 @@ export const ScanTool: React.FC = () => {
       {/* STEP 2: CLEAR SCANNER FILTER VIEW (ภาพสแกนตรง & ฟิลเตอร์) */}
       {/* ------------------------------------------------------------- */}
       {activeStep === 'filter' && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-[#1c292f] text-white">
+        <div className="fixed inset-0 z-50 flex flex-col bg-[#132627] text-white select-none">
           {/* Top Bar with Clear Scanner Filter Tabs */}
-          <div className="flex h-16 items-center justify-between border-b border-slate-700/60 bg-[#162126] px-4">
+          <div className="flex h-16 items-center justify-between border-b border-slate-700/60 bg-[#162a2b] px-4">
             <button
               type="button"
               onClick={() => setActiveStep('crop')}
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-800 text-slate-300 hover:bg-slate-700"
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-800 text-slate-300 hover:bg-slate-700 transition"
               title="ย้อนกลับไปปรับมุม"
             >
               <ArrowLeft className="h-5 w-5" />
@@ -988,7 +1348,7 @@ export const ScanTool: React.FC = () => {
           </div>
 
           {/* Bottom Bar (Matching Clear Scanner Action Bar) */}
-          <div className="flex h-20 items-center justify-around border-t border-slate-700/60 bg-[#162126] px-4">
+          <div className="flex h-20 items-center justify-around border-t border-slate-700/60 bg-[#0f1f21] px-4">
             <button
               type="button"
               onClick={() => setActiveStep('crop')}
@@ -1054,33 +1414,82 @@ export const ScanTool: React.FC = () => {
       {/* ------------------------------------------------------------- */}
       {activeStep === 'gallery' && (
         <div className="space-y-6">
-          <div className="mb-8 text-center">
+          <div className="mb-6 text-center">
             <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-600 text-white shadow-md">
               <Camera className="h-7 w-7" />
             </div>
             <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white sm:text-3xl">
-              สแกนเอกสาร (Doc Scanner สไตล์ Clear Scanner)
+              สแกนเอกสาร (Clear Scanner Web)
             </h2>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              ถ่ายรูป ปรับมุม 4 จุดได้อย่างอิสระ ลบเงา ทำพื้นหลังขาวใส และรวมหลายหน้าเป็น PDF
+              ถ่ายรูปสดหรือเลือกภาพ ปรับขอบเขต 8 จุด ลบเงาขาวใส และรวมหลายหน้าเป็น PDF
             </p>
           </div>
 
-          {/* Upload Dropzone */}
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-soft dark:border-slate-800 dark:bg-slate-900">
-            <FileDropzone
-              accept="image/*"
-              multiple={false}
-              onFilesSelected={handleFilesSelected}
-              title="ถ่ายรูปจากกล้อง หรือเลือกรูปถ่ายเอกสาร"
-              subtitle="ระบบจะเปิดหน้าต่างดึงมุมมอง 4 จุด (Perspective Crop) ให้ปรับได้อย่างอิสระ"
-              buttonText="เปิดกล้อง / เลือกรูปถ่าย"
-            />
+          {/* Main Quick Action Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* 1. Launch Live Camera Scanner */}
+            <button
+              type="button"
+              onClick={() => handleOpenLiveCamera('single')}
+              className="group flex flex-col items-center justify-center gap-3 rounded-3xl border-2 border-emerald-500/40 bg-gradient-to-br from-emerald-500/10 to-teal-500/5 p-6 text-center shadow-soft hover:border-emerald-500 hover:shadow-lg transition active:scale-[0.98] dark:border-emerald-500/30 dark:bg-emerald-950/20"
+            >
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500 text-white shadow-md group-hover:scale-110 transition">
+                <Camera className="h-8 w-8" />
+              </div>
+              <div>
+                <span className="text-base font-bold text-slate-900 dark:text-white">
+                  📷 เปิดกล้องสแกนเอกสาร (Live Camera)
+                </span>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  ถ่ายรูปจากกล้องสด พร้อมตรวจจับขอบเอกสารอัตโนมัติแบบ Clear Scanner
+                </p>
+              </div>
+              <span className="rounded-full bg-emerald-500 px-3 py-1 text-[11px] font-bold text-white shadow-xs">
+                เปิดใช้งานกล้องทันที
+              </span>
+            </button>
+
+            {/* 2. Upload / Drop existing file */}
+            <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft dark:border-slate-800 dark:bg-slate-900 flex flex-col justify-center">
+              <FileDropzone
+                accept="image/*"
+                multiple={false}
+                onFilesSelected={handleFilesSelected}
+                title="เลือกรูปภาพจากเครื่อง"
+                subtitle="นำเข้ารูปถ่ายเอกสารที่มีอยู่แล้วมาปรับมุมและลบเงา"
+                buttonText="เลือกไฟล์รูปภาพ"
+              />
+            </div>
+          </div>
+
+          {/* Quick Mode Launch Buttons */}
+          <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 mr-2">โหมดกล้องด่วน:</span>
+            {[
+              { id: 'single' as ScanMode, label: 'หน้าเดียว', icon: FileText },
+              { id: 'batch' as ScanMode, label: 'หลายหน้าต่อเนื่อง', icon: Layers },
+              { id: 'idcard' as ScanMode, label: 'บัตรประชาชน/ใบขับขี่', icon: CreditCard },
+              { id: 'passport' as ScanMode, label: 'หนังสือเดินทาง', icon: BookOpen },
+            ].map((m) => {
+              const Icon = m.icon;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => handleOpenLiveCamera(m.id)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-emerald-400 hover:text-emerald-600 shadow-2xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 transition"
+                >
+                  <Icon className="h-3.5 w-3.5 text-emerald-500" />
+                  <span>{m.label}</span>
+                </button>
+              );
+            })}
           </div>
 
           {/* Gallery Pages */}
           {pages.length > 0 && (
-            <div className="space-y-6">
+            <div className="space-y-6 pt-4">
               <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-soft dark:border-slate-800 dark:bg-slate-900">
                 <div className="mb-4 flex items-center justify-between">
                   <div>
@@ -1151,20 +1560,14 @@ export const ScanTool: React.FC = () => {
               {/* Action Buttons: Multi-export Options */}
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center justify-center gap-3">
-                  {/* Add more pages */}
-                  <label className="flex cursor-pointer items-center gap-2 rounded-2xl border-2 border-dashed border-slate-300 bg-white px-5 py-3.5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
-                    <Plus className="h-4 w-4 text-emerald-600" /> + ถ่าย / สแกนหน้าถัดไป
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files.length > 0) {
-                          handleFilesSelected(Array.from(e.target.files));
-                        }
-                      }}
-                      className="hidden"
-                    />
-                  </label>
+                  {/* Add more pages via Camera */}
+                  <button
+                    type="button"
+                    onClick={() => handleOpenLiveCamera('batch')}
+                    className="flex items-center gap-2 rounded-2xl border-2 border-dashed border-emerald-400 bg-emerald-50/50 px-5 py-3.5 text-sm font-bold text-emerald-800 shadow-sm transition hover:bg-emerald-100/60 dark:border-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-200"
+                  >
+                    <Plus className="h-4 w-4 text-emerald-600 dark:text-emerald-400" /> + ถ่ายสแกนหน้าถัดไป
+                  </button>
 
                   {/* 1. Download as PDF */}
                   <button
