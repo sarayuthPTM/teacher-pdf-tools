@@ -22,6 +22,10 @@ import {
   Layers,
   Wand2,
   FileText,
+  Plus,
+  Minus,
+  RotateCcw,
+  X,
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { PDFDocument } from 'pdf-lib';
@@ -54,6 +58,7 @@ interface TextItem {
   bgWhite: boolean;
   origWidth?: number;
   origHeight?: number;
+  origFontSize?: number;
 }
 
 interface ShapeItem {
@@ -104,9 +109,9 @@ export const EditPdfTool: React.FC = () => {
 
   // Active Tool State (Default to Smart Click-to-Edit mode!)
   const [activeTool, setActiveTool] = useState<ToolType>('smart-edit');
-  const [currentColor, setCurrentColor] = useState<string>('#0f172a');
-  const [currentFontSize, setCurrentFontSize] = useState<number>(16);
-  const [currentFontFamily, setCurrentFontFamily] = useState<string>('Sarabun');
+  const [currentColor, setCurrentColor] = useState<string>('#000000');
+  const [currentFontSize, setCurrentFontSize] = useState<number>(14);
+  const [currentFontFamily, setCurrentFontFamily] = useState<string>("'TH Sarabun New', Sarabun");
   const [isBold, setIsBold] = useState<boolean>(false);
   const [strokeWidth, setStrokeWidth] = useState<number>(3);
   const [bgWhiteout, setBgWhiteout] = useState<boolean>(true);
@@ -132,6 +137,43 @@ export const EditPdfTool: React.FC = () => {
   // Editing Text State
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [editingTextValue, setEditingTextValue] = useState<string>('');
+
+  // Helper to update active text annotation properties in real-time
+  const updateActiveText = (updates: Partial<TextItem>) => {
+    if (!editingTextId) return;
+    setAnnotations((prev) => {
+      const cur = prev[currentPage] || { texts: [], shapes: [], drawings: [], images: [] };
+      return {
+        ...prev,
+        [currentPage]: {
+          ...cur,
+          texts: cur.texts.map((t) => (t.id === editingTextId ? { ...t, ...updates } : t)),
+        },
+      };
+    });
+  };
+
+  const handleFontSizeChange = (newSize: number) => {
+    const clampedSize = Math.max(8, Math.min(72, Math.round(newSize * 10) / 10));
+    setCurrentFontSize(clampedSize);
+    updateActiveText({ fontSize: clampedSize });
+  };
+
+  const handleColorChange = (newColor: string) => {
+    setCurrentColor(newColor);
+    updateActiveText({ color: newColor });
+  };
+
+  const handleFontFamilyChange = (newFont: string) => {
+    setCurrentFontFamily(newFont);
+    updateActiveText({ fontFamily: newFont });
+  };
+
+  const handleBoldToggle = () => {
+    const nextBold = !isBold;
+    setIsBold(nextBold);
+    updateActiveText({ isBold: nextBold });
+  };
 
   const handleFilesSelected = async (files: File[]) => {
     if (!files[0]) return;
@@ -208,14 +250,21 @@ export const EditPdfTool: React.FC = () => {
             const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
             const fontHeight = Math.sqrt(tx[2] * tx[2] + tx[3] * tx[3]);
 
+            const ptScaleY = Math.hypot(item.transform[2], item.transform[3]);
+            const ptScaleX = Math.hypot(item.transform[0], item.transform[1]);
+            const rawPtSize = (item.height && item.height >= 8 && item.height <= 80)
+              ? item.height
+              : (ptScaleY || ptScaleX || (fontHeight / scale) || 14);
+            const detectedFontSize = Math.max(8, Math.min(60, Math.round(rawPtSize * 10) / 10));
+
             items.push({
               id: `detect_${currentPage}_${idx}`,
               text: cleanStr,
               x: tx[4] / scale,
               y: (tx[5] - fontHeight * 0.85) / scale,
               width: Math.max(item.width * (tx[0] / (item.transform[0] || 1)) / scale, 20),
-              height: Math.max(fontHeight / scale, 14),
-              fontSize: Math.max(Math.round(fontHeight / scale * 0.9), 12),
+              height: Math.max(fontHeight / scale, detectedFontSize + 2),
+              fontSize: detectedFontSize,
             });
           });
 
@@ -313,7 +362,6 @@ export const EditPdfTool: React.FC = () => {
 
     // 4. Draw Text Items
     pageAnn.texts.forEach((t) => {
-      if (t.id === editingTextId) return; // Hide when currently typing in DOM input
       ctx.save();
       const fontSize = t.fontSize * scale;
       ctx.font = `${t.isBold ? 'bold' : 'normal'} ${fontSize}px ${t.fontFamily}, 'TH Sarabun New', Sarabun, sans-serif`;
@@ -329,7 +377,9 @@ export const EditPdfTool: React.FC = () => {
         ctx.fillStyle = t.color;
       }
 
-      ctx.fillText(t.text, t.x * scale, t.y * scale);
+      if (t.id !== editingTextId) {
+        ctx.fillText(t.text, t.x * scale, t.y * scale);
+      }
       ctx.restore();
     });
   };
@@ -340,19 +390,24 @@ export const EditPdfTool: React.FC = () => {
 
   // Click on a detected native text item to edit directly!
   const handleEditDetectedText = (dt: DetectedTextItem) => {
+    const detectedSize = dt.fontSize || currentFontSize || 14;
+    setCurrentFontSize(detectedSize);
+    setCurrentColor('#000000');
+
     // Create text item over the detected position with Auto-Whiteout covering original bounds
     const newText: TextItem = {
       id: `${Date.now()}`,
       x: dt.x,
       y: dt.y,
       text: dt.text,
-      fontSize: dt.fontSize || currentFontSize,
-      color: currentColor,
+      fontSize: detectedSize,
+      color: '#000000',
       fontFamily: currentFontFamily,
       isBold,
       bgWhite: true,
       origWidth: dt.width,
       origHeight: dt.height,
+      origFontSize: detectedSize,
     };
 
     setAnnotations((prev) => {
@@ -393,6 +448,10 @@ export const EditPdfTool: React.FC = () => {
     if (clickedText) {
       setEditingTextId(clickedText.id);
       setEditingTextValue(clickedText.text);
+      setCurrentFontSize(clickedText.fontSize);
+      setCurrentColor(clickedText.color);
+      setCurrentFontFamily(clickedText.fontFamily);
+      setIsBold(clickedText.isBold);
       return;
     }
 
@@ -592,7 +651,18 @@ export const EditPdfTool: React.FC = () => {
         ...prev,
         [currentPage]: {
           ...cur,
-          texts: cur.texts.map((t) => (t.id === editingTextId ? { ...t, text: finalVal } : t)),
+          texts: cur.texts.map((t) =>
+            t.id === editingTextId
+              ? {
+                  ...t,
+                  text: finalVal,
+                  fontSize: currentFontSize,
+                  color: currentColor,
+                  fontFamily: currentFontFamily,
+                  isBold,
+                }
+              : t
+          ),
         },
       };
     });
@@ -843,41 +913,73 @@ export const EditPdfTool: React.FC = () => {
             </div>
 
             {/* Customizer Sub-Bar (Font size, Color, Undo) */}
-            <div className="flex flex-wrap items-center gap-2.5 border-t border-slate-100 pt-2.5 dark:border-slate-800 lg:border-t-0 lg:pt-0">
+            <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-2.5 dark:border-slate-800 lg:border-t-0 lg:pt-0">
               {/* Color Picker */}
               <div className="flex items-center gap-1.5">
                 <span className="text-xs text-slate-400">สี:</span>
                 <input
                   type="color"
                   value={currentColor}
-                  onChange={(e) => setCurrentColor(e.target.value)}
+                  onChange={(e) => handleColorChange(e.target.value)}
                   className="h-7 w-7 cursor-pointer rounded-lg border border-slate-200 dark:border-slate-700"
+                  title="เลือกสีข้อความ"
                 />
               </div>
 
-              {/* Font Size */}
+              {/* Font Size with - and + buttons */}
               <div className="flex items-center gap-1 text-xs text-slate-700 dark:text-slate-300">
                 <span>ขนาด:</span>
+                <button
+                  type="button"
+                  onClick={() => handleFontSizeChange(Math.max(8, currentFontSize - 1))}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 font-bold text-slate-700 hover:bg-slate-200 active:scale-90 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  title="ลดขนาดตัวอักษร (-1pt)"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </button>
                 <select
                   value={currentFontSize}
-                  onChange={(e) => setCurrentFontSize(parseInt(e.target.value, 10))}
+                  onChange={(e) => handleFontSizeChange(parseFloat(e.target.value))}
                   className="rounded-lg border border-slate-200 bg-slate-50 p-1 text-xs font-bold dark:border-slate-700 dark:bg-slate-800"
                 >
-                  {[12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 28, 32, 40].map((size) => (
+                  {[8, 9, 10, 11, 12, 12.5, 13, 13.5, 14, 14.5, 15, 15.5, 16, 17, 18, 20, 22, 24, 28, 32, 40].map((size) => (
                     <option key={size} value={size}>
                       {size}pt
                     </option>
                   ))}
                 </select>
+                <button
+                  type="button"
+                  onClick={() => handleFontSizeChange(Math.min(72, currentFontSize + 1))}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 font-bold text-slate-700 hover:bg-slate-200 active:scale-90 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                  title="เพิ่มขนาดตัวอักษร (+1pt)"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
               </div>
+
+              {/* Bold Toggle */}
+              <button
+                type="button"
+                onClick={handleBoldToggle}
+                className={`flex h-7 w-7 items-center justify-center rounded-lg border text-xs font-bold transition ${
+                  isBold
+                    ? 'border-indigo-600 bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-300'
+                    : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                }`}
+                title="ตัวหนา"
+              >
+                B
+              </button>
 
               {/* Font Family */}
               <select
                 value={currentFontFamily}
-                onChange={(e) => setCurrentFontFamily(e.target.value)}
+                onChange={(e) => handleFontFamilyChange(e.target.value)}
                 className="rounded-lg border border-slate-200 bg-slate-50 p-1 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
               >
-                <option value="Sarabun">สารบรรณ (Sarabun)</option>
+                <option value="'TH Sarabun New', Sarabun">TH Sarabun (สารบรรณราชการ)</option>
+                <option value="Sarabun">Sarabun (กูเกิลสารบรรณ)</option>
                 <option value="Prompt">พร้อมต์ (Prompt)</option>
                 <option value="Kanit">คณิต (Kanit)</option>
               </select>
@@ -1015,43 +1117,170 @@ export const EditPdfTool: React.FC = () => {
                 }`}
               />
 
-              {/* Floating Inline Text Editor (When typing text) */}
-              {editingTextId && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: `${(annotations[currentPage]?.texts.find((t) => t.id === editingTextId)?.x || 0) * scale}px`,
-                    top: `${(annotations[currentPage]?.texts.find((t) => t.id === editingTextId)?.y || 0) * scale}px`,
-                  }}
-                  className="z-40 flex items-center gap-1.5 rounded-xl border-2 border-indigo-600 bg-white p-1.5 shadow-2xl animate-in zoom-in-95 duration-100"
-                >
-                  <input
-                    type="text"
-                    autoFocus
-                    placeholder="พิมพ์ข้อความที่ต้องการแก้ไข..."
-                    value={editingTextValue}
-                    onChange={(e) => setEditingTextValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') saveEditingText();
-                    }}
+              {/* Floating Inline Text Editor & Real-Time Font Styler */}
+              {editingTextId && (() => {
+                const activeTextObj = annotations[currentPage]?.texts.find((t) => t.id === editingTextId);
+                const activeFontSize = activeTextObj?.fontSize || currentFontSize;
+                const activeOrigSize = activeTextObj?.origFontSize;
+
+                return (
+                  <div
                     style={{
-                      fontSize: `${currentFontSize * scale}px`,
-                      color: currentColor,
-                      fontFamily: `${currentFontFamily}, 'TH Sarabun New', Sarabun, sans-serif`,
-                      fontWeight: isBold ? 'bold' : 'normal',
+                      position: 'absolute',
+                      left: `${Math.max(8, (activeTextObj?.x || 0) * scale - 6)}px`,
+                      top: `${Math.max(8, (activeTextObj?.y || 0) * scale - 48)}px`,
                     }}
-                    className="min-w-[220px] bg-transparent px-2 outline-none text-slate-900 font-medium"
-                  />
-                  <button
-                    type="button"
-                    onClick={saveEditingText}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white shadow-xs hover:bg-emerald-700"
-                    title="เสร็จสิ้น (Enter)"
+                    className="z-40 flex flex-col gap-1.5 rounded-2xl border-2 border-indigo-600 bg-white p-2.5 shadow-2xl animate-in zoom-in-95 duration-100 max-w-[95vw]"
                   >
-                    <Check className="h-4 w-4" />
-                  </button>
-                </div>
-              )}
+                    {/* Top mini toolbar: Real-time Font Size Adjuster & Controls */}
+                    <div className="flex flex-wrap items-center gap-1.5 pb-1.5 border-b border-slate-100 text-xs">
+                      <span className="font-bold text-slate-700 dark:text-slate-800">ขนาด:</span>
+
+                      {/* Decrement Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleFontSizeChange(Math.max(8, activeFontSize - 1))}
+                        className="flex h-6 w-6 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 font-bold text-slate-700 hover:bg-slate-200 active:scale-90"
+                        title="ลดขนาดตัวอักษร (-1pt)"
+                      >
+                        <Minus className="h-3.5 w-3.5" />
+                      </button>
+
+                      {/* Font Size Select */}
+                      <select
+                        value={activeFontSize}
+                        onChange={(e) => handleFontSizeChange(parseFloat(e.target.value))}
+                        className="h-6 rounded-lg border border-slate-300 bg-white px-1.5 text-xs font-bold text-indigo-700 focus:border-indigo-500"
+                      >
+                        {[8, 9, 10, 11, 12, 12.5, 13, 13.5, 14, 14.5, 15, 15.5, 16, 17, 18, 20, 22, 24, 28, 32].map((sz) => (
+                          <option key={sz} value={sz}>
+                            {sz} pt
+                          </option>
+                        ))}
+                      </select>
+
+                      {/* Increment Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleFontSizeChange(Math.min(72, activeFontSize + 1))}
+                        className="flex h-6 w-6 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 font-bold text-slate-700 hover:bg-slate-200 active:scale-90"
+                        title="เพิ่มขนาดตัวอักษร (+1pt)"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
+
+                      {/* Quick Presets for common Thai document sizes */}
+                      <div className="hidden sm:flex items-center gap-1 ml-1">
+                        {[12, 13, 14, 15, 16].map((sz) => (
+                          <button
+                            key={sz}
+                            type="button"
+                            onClick={() => handleFontSizeChange(sz)}
+                            className={`px-1.5 py-0.5 rounded text-[11px] font-semibold transition ${
+                              activeFontSize === sz
+                                ? 'bg-indigo-600 text-white'
+                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}
+                          >
+                            {sz}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Reset to Original Size if available */}
+                      {activeOrigSize && (
+                        <button
+                          type="button"
+                          onClick={() => handleFontSizeChange(activeOrigSize)}
+                          className="flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-900 hover:bg-amber-200 transition"
+                          title={`ปรับขนาดให้เท่ากับข้อความเดิมในเอกสาร (${activeOrigSize}pt)`}
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          เท่าเดิม ({activeOrigSize}pt)
+                        </button>
+                      )}
+
+                      {/* Bold Toggle */}
+                      <button
+                        type="button"
+                        onClick={handleBoldToggle}
+                        className={`flex h-6 w-6 items-center justify-center rounded-lg border text-xs font-bold transition ml-1 ${
+                          isBold
+                            ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
+                            : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
+                        }`}
+                        title="ตัวหนา"
+                      >
+                        B
+                      </button>
+
+                      {/* Color buttons */}
+                      <div className="flex items-center gap-1 ml-auto">
+                        <button
+                          type="button"
+                          onClick={() => handleColorChange('#000000')}
+                          className={`h-5 w-5 rounded-full border border-slate-300 bg-black ${currentColor === '#000000' ? 'ring-2 ring-indigo-500' : ''}`}
+                          title="สีดำมาตรฐาน"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleColorChange('#0f172a')}
+                          className={`h-5 w-5 rounded-full border border-slate-300 bg-slate-900 ${currentColor === '#0f172a' ? 'ring-2 ring-indigo-500' : ''}`}
+                          title="สีกรมท่า"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleColorChange('#dc2626')}
+                          className={`h-5 w-5 rounded-full border border-slate-300 bg-red-600 ${currentColor === '#dc2626' ? 'ring-2 ring-indigo-500' : ''}`}
+                          title="สีแดง"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Input field and Confirm / Cancel buttons */}
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        autoFocus
+                        placeholder="พิมพ์ข้อความที่ต้องการแก้ไข..."
+                        value={editingTextValue}
+                        onChange={(e) => {
+                          setEditingTextValue(e.target.value);
+                          updateActiveText({ text: e.target.value });
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveEditingText();
+                          if (e.key === 'Escape') setEditingTextId(null);
+                        }}
+                        style={{
+                          fontSize: `${activeFontSize * scale}px`,
+                          color: currentColor,
+                          fontFamily: `${currentFontFamily}, 'TH Sarabun New', Sarabun, sans-serif`,
+                          fontWeight: isBold ? 'bold' : 'normal',
+                        }}
+                        className="min-w-[260px] max-w-[550px] rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1 text-slate-900 outline-none focus:border-indigo-500 focus:bg-white font-medium shadow-inner"
+                      />
+                      <button
+                        type="button"
+                        onClick={saveEditingText}
+                        className="flex h-8 items-center gap-1 rounded-xl bg-emerald-600 px-3 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 active:scale-95 transition"
+                        title="เสร็จสิ้น (Enter)"
+                      >
+                        <Check className="h-4 w-4" />
+                        ตกลง
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingTextId(null)}
+                        className="flex h-8 items-center justify-center rounded-xl border border-slate-200 bg-slate-100 px-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+                        title="ปิด (Esc)"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
