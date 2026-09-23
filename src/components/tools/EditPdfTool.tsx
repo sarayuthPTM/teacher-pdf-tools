@@ -21,10 +21,12 @@ import {
   MousePointerClick,
   Layers,
   Wand2,
+  FileText,
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { PDFDocument } from 'pdf-lib';
 import { FileDropzone } from '../ui/FileDropzone';
+import { normalizeThaiPua, pdfToDocx, downloadBlob } from '../../lib/pdf-service';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
@@ -50,6 +52,8 @@ interface TextItem {
   fontFamily: string;
   isBold: boolean;
   bgWhite: boolean;
+  origWidth?: number;
+  origHeight?: number;
 }
 
 interface ShapeItem {
@@ -96,6 +100,7 @@ export const EditPdfTool: React.FC = () => {
   const [scale, setScale] = useState<number>(1.25);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [isConvertingWord, setIsConvertingWord] = useState<boolean>(false);
 
   // Active Tool State (Default to Smart Click-to-Edit mode!)
   const [activeTool, setActiveTool] = useState<ToolType>('smart-edit');
@@ -149,6 +154,21 @@ export const EditPdfTool: React.FC = () => {
     }
   };
 
+  const handleConvertToWordDirectly = async () => {
+    if (!file) return;
+    setIsConvertingWord(true);
+    try {
+      const docxBlob = await pdfToDocx(file);
+      const outputFilename = file.name.replace(/\.pdf$/i, '') + '.docx';
+      downloadBlob(docxBlob, outputFilename);
+    } catch (err: any) {
+      console.error('Conversion to Word error:', err);
+      alert('เกิดข้อผิดพลาดในการแปลงเป็น Word: ' + (err.message || 'โปรดลองใหม่อีกครั้ง'));
+    } finally {
+      setIsConvertingWord(false);
+    }
+  };
+
   // Render current PDF page & detect native text elements
   useEffect(() => {
     if (!pdfDoc) return;
@@ -182,12 +202,15 @@ export const EditPdfTool: React.FC = () => {
           textContent.items.forEach((item: any, idx: number) => {
             if (!item.str || item.str.trim() === '') return;
 
+            const cleanStr = normalizeThaiPua(item.str);
+            if (!cleanStr || cleanStr.trim() === '') return;
+
             const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
             const fontHeight = Math.sqrt(tx[2] * tx[2] + tx[3] * tx[3]);
 
             items.push({
               id: `detect_${currentPage}_${idx}`,
-              text: item.str,
+              text: cleanStr,
               x: tx[4] / scale,
               y: (tx[5] - fontHeight * 0.85) / scale,
               width: Math.max(item.width * (tx[0] / (item.transform[0] || 1)) / scale, 20),
@@ -293,14 +316,16 @@ export const EditPdfTool: React.FC = () => {
       if (t.id === editingTextId) return; // Hide when currently typing in DOM input
       ctx.save();
       const fontSize = t.fontSize * scale;
-      ctx.font = `${t.isBold ? 'bold' : 'normal'} ${fontSize}px ${t.fontFamily}, Sarabun, sans-serif`;
+      ctx.font = `${t.isBold ? 'bold' : 'normal'} ${fontSize}px ${t.fontFamily}, 'TH Sarabun New', Sarabun, sans-serif`;
       ctx.fillStyle = t.color;
       ctx.textBaseline = 'top';
 
       if (t.bgWhite) {
         const metrics = ctx.measureText(t.text);
+        const coverWidth = Math.max(metrics.width + 6, (t.origWidth || 0) * scale + 6);
+        const coverHeight = Math.max(fontSize + 6, (t.origHeight || 0) * scale + 4);
         ctx.fillStyle = '#ffffff';
-        ctx.fillRect(t.x * scale - 2, t.y * scale - 2, metrics.width + 5, fontSize + 4);
+        ctx.fillRect(t.x * scale - 2, t.y * scale - 2, coverWidth, coverHeight);
         ctx.fillStyle = t.color;
       }
 
@@ -315,7 +340,7 @@ export const EditPdfTool: React.FC = () => {
 
   // Click on a detected native text item to edit directly!
   const handleEditDetectedText = (dt: DetectedTextItem) => {
-    // Create text item over the detected position with Auto-Whiteout
+    // Create text item over the detected position with Auto-Whiteout covering original bounds
     const newText: TextItem = {
       id: `${Date.now()}`,
       x: dt.x,
@@ -326,6 +351,8 @@ export const EditPdfTool: React.FC = () => {
       fontFamily: currentFontFamily,
       isBold,
       bgWhite: true,
+      origWidth: dt.width,
+      origHeight: dt.height,
     };
 
     setAnnotations((prev) => {
@@ -646,18 +673,20 @@ export const EditPdfTool: React.FC = () => {
         pageAnn.texts.forEach((t) => {
           ctx.save();
           const fontSize = t.fontSize * pScale;
-          ctx.font = `${t.isBold ? 'bold' : 'normal'} ${fontSize}px ${t.fontFamily}, Sarabun, sans-serif`;
+          ctx.font = `${t.isBold ? 'bold' : 'normal'} ${fontSize}px ${t.fontFamily}, 'TH Sarabun New', Sarabun, sans-serif`;
           ctx.fillStyle = t.color;
           ctx.textBaseline = 'top';
 
           if (t.bgWhite) {
             const metrics = ctx.measureText(t.text);
+            const coverWidth = Math.max(metrics.width + 8, (t.origWidth || 0) * pScale + 8);
+            const coverHeight = Math.max(fontSize + 6, (t.origHeight || 0) * pScale + 6);
             ctx.fillStyle = '#ffffff';
-            ctx.fillRect(t.x * pScale - 3, t.y * pScale - 2, metrics.width + 6, fontSize + 4);
+            ctx.fillRect(t.x * pScale - 3, t.y * pScale - 2, coverWidth, coverHeight);
             ctx.fillStyle = t.color;
           }
 
-          ctx.fillText(t.text, t.x * pScale, t.y * scale ? t.y * pScale : t.y * 2.0);
+          ctx.fillText(t.text, t.x * pScale, t.y * pScale);
           ctx.restore();
         });
 
@@ -719,6 +748,41 @@ export const EditPdfTool: React.FC = () => {
         </div>
       ) : (
         <div className="space-y-3">
+          {/* Direct Word Conversion Recommendation Banner */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 p-3.5 text-amber-950 shadow-xs dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500 text-white shadow-xs">
+                <FileText className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white">
+                  ต้องการแก้ไขข้อความ จัดหน้า หรือเปลี่ยนฟอนต์เหมือน Microsoft Word ทั้งฉบับหรือไม่?
+                </p>
+                <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+                  ไฟล์ PDF มีโครงสร้างแบบตำแหน่งตายตัว (Fixed Coordinates) หากต้องการพิมพ์แก้แล้วข้อความดันบรรทัดถัดไปแบบ Word แนะนำให้กดปุ่มนี้เพื่อแปลงเป็น .docx ไปแก้ไขใน Microsoft Word ได้สมบูรณ์ 100%
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={isConvertingWord}
+              onClick={handleConvertToWordDirectly}
+              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm hover:from-blue-700 hover:to-indigo-700 active:scale-95 transition-all disabled:opacity-50 cursor-pointer"
+            >
+              {isConvertingWord ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  กำลังแปลงเป็น Word...
+                </>
+              ) : (
+                <>
+                  <FileText className="h-4 w-4" />
+                  แปลงเป็น Word (.docx) ทันที
+                </>
+              )}
+            </button>
+          </div>
+
           {/* Active Mode Notice */}
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 to-purple-50 px-4 py-2.5 text-xs text-indigo-950 dark:border-indigo-900/60 dark:bg-indigo-950/40 dark:text-indigo-200">
             <div className="flex items-center gap-2">
@@ -973,7 +1037,7 @@ export const EditPdfTool: React.FC = () => {
                     style={{
                       fontSize: `${currentFontSize * scale}px`,
                       color: currentColor,
-                      fontFamily: currentFontFamily,
+                      fontFamily: `${currentFontFamily}, 'TH Sarabun New', Sarabun, sans-serif`,
                       fontWeight: isBold ? 'bold' : 'normal',
                     }}
                     className="min-w-[220px] bg-transparent px-2 outline-none text-slate-900 font-medium"
