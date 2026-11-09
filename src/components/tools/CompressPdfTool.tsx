@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Minimize2,
   Download,
@@ -10,8 +10,8 @@ import {
   FileText,
   RefreshCw,
   Info,
-  AlertTriangle,
   Layers,
+  Check,
 } from 'lucide-react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { PDFDocument } from 'pdf-lib';
@@ -37,7 +37,7 @@ interface CompressionResult {
  * Calculate optimal canvas rendering scale and JPEG quality based on target bytes per page
  */
 function calculateAdaptiveParams(targetBytesPerPage: number) {
-  // Clamped between 20 KB and 500 KB per page
+  // Budget range clamped between 20 KB and 500 KB per page
   const clamped = Math.max(20000, Math.min(500000, targetBytesPerPage));
   // Normalized 0 to 1
   const t = (clamped - 20000) / (500000 - 20000);
@@ -53,19 +53,27 @@ export const CompressPdfTool: React.FC = () => {
   const [numPages, setNumPages] = useState<number>(1);
   const [isDetecting, setIsDetecting] = useState<boolean>(false);
   const [level, setLevel] = useState<'recommended' | 'extreme' | 'low' | 'custom'>('recommended');
-  const [targetMB, setTargetMB] = useState<number>(1.2);
-  const [engineMode, setEngineMode] = useState<'smart' | 'lossless'>('smart');
+  const [targetMB, setTargetMB] = useState<number>(1.5);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState<{ current: number; total: number; stage?: string } | null>(null);
   const [isDone, setIsDone] = useState(false);
   const [result, setResult] = useState<CompressionResult | null>(null);
 
   const originalMB = file ? file.size / (1024 * 1024) : 0;
-  // Min selectable target is 15% of original (at least 0.05 MB)
-  const minMB = file ? Math.max(0.05, Number((originalMB * 0.15).toFixed(2))) : 0.1;
+  // Min selectable target is 15% of original (minimum 0.1 MB)
+  const minMB = file ? Math.max(0.1, Number((originalMB * 0.15).toFixed(2))) : 0.1;
   // Max selectable target is 90% of original to guarantee compression
-  const maxMB = file ? Math.max(minMB + 0.05, Number((originalMB * 0.90).toFixed(2))) : 10;
+  const maxMB = file ? Math.max(minMB + 0.1, Number((originalMB * 0.90).toFixed(2))) : 10;
   const step = originalMB > 10 ? 0.2 : originalMB > 2 ? 0.05 : 0.02;
+
+  // Cleanup object URLs to avoid memory leaks
+  useEffect(() => {
+    return () => {
+      if (result?.downloadUrl) {
+        URL.revokeObjectURL(result.downloadUrl);
+      }
+    };
+  }, [result]);
 
   const handleFileSelect = async (files: File[]) => {
     if (!files[0]) return;
@@ -78,20 +86,20 @@ export const CompressPdfTool: React.FC = () => {
 
     try {
       const buffer = await selected.arrayBuffer();
-      // Use buffer slice so the original buffer is preserved
+      // Slice buffer so original is untouched
       const pdfDoc = await pdfjsLib.getDocument({ data: buffer.slice(0) }).promise;
       const pagesCount = pdfDoc.numPages || 1;
       setNumPages(pagesCount);
 
       const sizeMB = selected.size / (1024 * 1024);
-      // Balanced default target (~50% of original, at least 0.1 MB)
-      const defaultTarget = Math.max(0.1, Number((sizeMB * 0.50).toFixed(2)));
+      // Balanced default target (~50% of original, clamped between minMB and maxMB)
+      const defaultTarget = Math.max(minMB, Math.min(maxMB, Number((sizeMB * 0.50).toFixed(2))));
       setTargetMB(defaultTarget);
       setLevel('recommended');
     } catch (err) {
       console.warn('Could not inspect PDF pages count upfront:', err);
       const sizeMB = selected.size / (1024 * 1024);
-      setTargetMB(Math.max(0.1, Number((sizeMB * 0.50).toFixed(2))));
+      setTargetMB(Math.max(0.2, Number((sizeMB * 0.50).toFixed(2))));
       setLevel('recommended');
     } finally {
       setIsDetecting(false);
@@ -130,167 +138,80 @@ export const CompressPdfTool: React.FC = () => {
 
       const arrayBuffer = await file.arrayBuffer();
 
-      // ==========================================
-      // MODE 1: Lossless Object Stream Compression
-      // ==========================================
-      if (engineMode === 'lossless') {
-        const pdfDoc = await PDFDocument.load(arrayBuffer.slice(0), { ignoreEncryption: true });
-        const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
-        const compressedBlob = new Blob([pdfBytes as any], { type: 'application/pdf' });
-
-        if (compressedBlob.size >= file.size * 0.98) {
-          alert(
-            'ไฟล์นี้มีโครงสร้างที่บีบอัดระดับ Stream อยู่แล้ว ทำให้โหมดโครงสร้างดั้งเดิมลดขนาดได้ไม่มาก\n\nระบบจะแนะนำให้เปลี่ยนเป็น "โหมดบีบอัดอัจฉริยะ (Smart Visual Mode)" เพื่อลดขนาดภาพและหน้าเอกสารได้ตามเป้าหมายจริง 100%'
-          );
-        }
-
-        const downloadUrl = URL.createObjectURL(compressedBlob);
-        const res: CompressionResult = {
-          originalSize: file.size,
-          compressedSize: compressedBlob.size,
-          compressedBlob,
-          downloadUrl,
-          fileName: `compressed_${file.name}`,
-        };
-        setResult(res);
-        setIsDone(true);
-        downloadBlob(compressedBlob, res.fileName);
-        return;
-      }
-
-      // ==========================================
-      // MODE 2: Smart Visual Compression
-      // (Guaranteed target-size reduction for scanned documents & photos)
-      // ==========================================
+      // Load document with PDF.js
       const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer.slice(0) });
       const pdfDoc = await loadingTask.promise;
       const pagesCount = pdfDoc.numPages || 1;
       setNumPages(pagesCount);
 
-      // Calculate target bytes budget for each page (with 12% reserve for PDF headers/xref table)
+      // Target budget in bytes
       const targetTotalBytes = targetMB * 1024 * 1024;
+      // Per page budget with 12% safety reserve for PDF structural overhead
       const targetBytesPerPage = Math.max(15000, Math.floor((targetTotalBytes / pagesCount) * 0.88));
 
-      // Initial adaptive scale and quality based on pagesCount and targetMB
+      // Calculate initial adaptive scale and quality based on page count and target
       let { scale: currentScale, quality: currentQuality } = calculateAdaptiveParams(targetBytesPerPage);
 
-      const newPdf = await PDFDocument.create();
-
-      for (let i = 1; i <= pagesCount; i++) {
-        setProgress({
-          current: i,
-          total: pagesCount,
-          stage: `กำลังลดขนาดหน้า ${i} จาก ${pagesCount} หน้า...`,
-        });
-
-        const page = await pdfDoc.getPage(i);
-        const viewport = page.getViewport({ scale: currentScale });
-
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.floor(viewport.width));
-        canvas.height = Math.max(1, Math.floor(viewport.height));
-        const ctx = canvas.getContext('2d');
-
-        if (ctx) {
-          // White background ensures clean scans without black artifacts
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-          await page.render({
-            canvasContext: ctx,
-            viewport,
-          }).promise;
-
-          // Convert to JPEG synchronously via toDataURL (rock solid across Chrome, Edge, Safari iOS)
-          const dataUrl = canvas.toDataURL('image/jpeg', currentQuality);
-
-          // Free canvas memory immediately for mobile devices
-          canvas.width = 0;
-          canvas.height = 0;
-
-          // Fast binary string to Uint8Array conversion
-          const base64Part = dataUrl.split(',')[1];
-          const binaryString = atob(base64Part);
-          const bytesLen = binaryString.length;
-          const jpegBytes = new Uint8Array(bytesLen);
-          for (let b = 0; b < bytesLen; b++) {
-            jpegBytes[b] = binaryString.charCodeAt(b);
-          }
-
-          // Closed-loop dynamic feedback after page 1:
-          // If page 1 came out significantly larger than the budget, adapt remaining pages!
-          if (i === 1 && pagesCount > 1) {
-            const actualRatio = bytesLen / targetBytesPerPage;
-            if (actualRatio > 1.25) {
-              currentScale = Math.max(0.65, Number((currentScale * 0.82).toFixed(2)));
-              currentQuality = Math.max(0.25, Number((currentQuality * 0.80).toFixed(2)));
-            } else if (actualRatio < 0.60) {
-              currentQuality = Math.min(0.85, Number((currentQuality * 1.15).toFixed(2)));
-            }
-          }
-
-          const embeddedImage = await newPdf.embedJpg(jpegBytes);
-          const origViewport = page.getViewport({ scale: 1.0 });
-          const newPage = newPdf.addPage([origViewport.width, origViewport.height]);
-          newPage.drawImage(embeddedImage, {
-            x: 0,
-            y: 0,
-            width: origViewport.width,
-            height: origViewport.height,
-          });
-        }
-
-        // Brief breather for browser UI update
-        await new Promise((r) => setTimeout(r, 15));
-      }
-
-      setProgress({
-        current: pagesCount,
-        total: pagesCount,
-        stage: 'กำลังบันทึกและปรับโครงสร้าง PDF ขั้นสุดท้าย...',
-      });
-
-      const compressedBytes = await newPdf.save({ useObjectStreams: true });
-      let compressedBlob = new Blob([compressedBytes as any], { type: 'application/pdf' });
-
-      // ==========================================
-      // GUARANTEE: The output file MUST be smaller than the original!
-      // If for any edge case it wasn't, run an emergency quick downsample pass.
-      // ==========================================
-      if (compressedBlob.size >= file.size) {
-        setProgress({
-          current: pagesCount,
-          total: pagesCount,
-          stage: 'กำลังปรับลดความละเอียดพิเศษเพื่อให้ขนาดลดลงจริง 100%...',
-        });
-
-        const emergencyPdf = await PDFDocument.create();
-        const emergencyScale = Math.max(0.60, currentScale * 0.70);
-        const emergencyQuality = Math.max(0.25, currentQuality * 0.65);
+      const renderPagesToPdf = async (scale: number, quality: number) => {
+        const doc = await PDFDocument.create();
+        let runningScale = scale;
+        let runningQuality = quality;
 
         for (let i = 1; i <= pagesCount; i++) {
+          setProgress({
+            current: i,
+            total: pagesCount,
+            stage: `กำลังลดขนาดหน้า ${i} จาก ${pagesCount} หน้า...`,
+          });
+
           const page = await pdfDoc.getPage(i);
-          const viewport = page.getViewport({ scale: emergencyScale });
+          const viewport = page.getViewport({ scale: runningScale });
+
           const canvas = document.createElement('canvas');
           canvas.width = Math.max(1, Math.floor(viewport.width));
           canvas.height = Math.max(1, Math.floor(viewport.height));
           const ctx = canvas.getContext('2d');
+
           if (ctx) {
+            // Fill crisp white background
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
-            await page.render({ canvasContext: ctx, viewport }).promise;
-            const dataUrl = canvas.toDataURL('image/jpeg', emergencyQuality);
+
+            await page.render({
+              canvasContext: ctx,
+              viewport,
+            }).promise;
+
+            // Synchronous instant toDataURL (rock solid across Chrome, Edge, Safari iOS)
+            const dataUrl = canvas.toDataURL('image/jpeg', runningQuality);
+
+            // Free canvas RAM immediately
             canvas.width = 0;
             canvas.height = 0;
 
-            const binaryString = atob(dataUrl.split(',')[1]);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let b = 0; b < binaryString.length; b++) {
-              bytes[b] = binaryString.charCodeAt(b);
+            const base64Part = dataUrl.split(',')[1];
+            const binaryString = atob(base64Part);
+            const bytesLen = binaryString.length;
+            const jpegBytes = new Uint8Array(bytesLen);
+            for (let b = 0; b < bytesLen; b++) {
+              jpegBytes[b] = binaryString.charCodeAt(b);
             }
-            const embeddedImage = await emergencyPdf.embedJpg(bytes);
+
+            // Adaptive feedback after page 1:
+            // If page 1 came out noticeably larger than the budget, adapt remaining pages!
+            if (i === 1 && pagesCount > 1) {
+              const actualRatio = bytesLen / targetBytesPerPage;
+              if (actualRatio > 1.2) {
+                runningScale = Math.max(0.60, Number((runningScale * 0.82).toFixed(2)));
+                runningQuality = Math.max(0.25, Number((runningQuality * 0.80).toFixed(2)));
+              } else if (actualRatio < 0.6) {
+                runningQuality = Math.min(0.85, Number((runningQuality * 1.15).toFixed(2)));
+              }
+            }
+
+            const embeddedImage = await doc.embedJpg(jpegBytes);
             const origViewport = page.getViewport({ scale: 1.0 });
-            const newPage = emergencyPdf.addPage([origViewport.width, origViewport.height]);
+            const newPage = doc.addPage([origViewport.width, origViewport.height]);
             newPage.drawImage(embeddedImage, {
               x: 0,
               y: 0,
@@ -298,11 +219,36 @@ export const CompressPdfTool: React.FC = () => {
               height: origViewport.height,
             });
           }
+
+          // Small delay for smooth UI update
+          await new Promise((r) => setTimeout(r, 15));
         }
-        const emergencyBytes = await emergencyPdf.save({ useObjectStreams: true });
-        compressedBlob = new Blob([emergencyBytes as any], { type: 'application/pdf' });
+
+        const bytes = await doc.save({ useObjectStreams: true });
+        return bytes;
+      };
+
+      // Pass 1: Primary adaptive compression
+      let compressedBytes = await renderPagesToPdf(currentScale, currentQuality);
+
+      // Pass 2 (Strict Target Guard):
+      // If result exceeds the target size by more than 5% or is not smaller than original,
+      // run a precise re-trim pass so the downloaded file NEVER exceeds the user's target!
+      if (compressedBytes.byteLength > targetTotalBytes * 1.05 || compressedBytes.byteLength >= file.size) {
+        setProgress({
+          current: pagesCount,
+          total: pagesCount,
+          stage: 'กำลังปรับแต่งความละเอียดเพิ่มเติมให้ได้ขนาดตรงตามเป้าหมาย...',
+        });
+
+        const reductionRatio = Math.min(0.85, targetTotalBytes / compressedBytes.byteLength);
+        const adjustScale = Math.max(0.60, Number((currentScale * Math.sqrt(reductionRatio) * 0.95).toFixed(2)));
+        const adjustQuality = Math.max(0.22, Number((currentQuality * Math.sqrt(reductionRatio) * 0.90).toFixed(2)));
+
+        compressedBytes = await renderPagesToPdf(adjustScale, adjustQuality);
       }
 
+      const compressedBlob = new Blob([compressedBytes as any], { type: 'application/pdf' });
       const downloadUrl = URL.createObjectURL(compressedBlob);
       const res: CompressionResult = {
         originalSize: file.size,
@@ -328,7 +274,7 @@ export const CompressPdfTool: React.FC = () => {
     const ratio = targetMB / (originalMB || 1);
     if (ratio >= 0.70) {
       return {
-        label: '✨ ความคมชัดสูงมาก (Print / High Quality)',
+        label: '✨ ความคมชัดสูงมาก (High Quality)',
         desc: 'เน้นความคมชัดของภาพและตัวหนังสือ เหมาะสำหรับเอกสารสำคัญหรือใช้สั่งพิมพ์',
         color: 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800',
       };
@@ -342,7 +288,7 @@ export const CompressPdfTool: React.FC = () => {
     }
     return {
       label: '🔥 บีบอัดสูงสุด (กะทัดรัด - Extreme)',
-      desc: 'ไฟล์เล็กที่สุดเพื่อผ่านเกณฑ์ระบบราชการที่จำกัดขนาดเข้มงวด เช่น ต่ำกว่า 1 MB หรือ 500 KB',
+      desc: 'ไฟล์เล็กที่สุดเพื่อผ่านเกณฑ์ระบบราชการที่จำกัดขนาดเข้มงวด เช่น ต่ำกว่า 1-2 MB หรือ 500 KB',
       color: 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800',
     };
   };
@@ -517,17 +463,17 @@ export const CompressPdfTool: React.FC = () => {
                     ≤ 2.0 MB (ส่งอีเมล / LINE)
                   </button>
                 )}
-                {originalMB > 5.0 && (
+                {originalMB > 3.0 && (
                   <button
                     type="button"
-                    onClick={() => applyFixedLimit(5.0)}
+                    onClick={() => applyFixedLimit(3.0)}
                     className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition ${
-                      targetMB === 5.0
+                      targetMB === 3.0
                         ? 'border-amber-500 bg-amber-500 text-white shadow-xs'
                         : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
                     }`}
                   >
-                    ≤ 5.0 MB
+                    ≤ 3.0 MB
                   </button>
                 )}
               </div>
@@ -643,69 +589,13 @@ export const CompressPdfTool: React.FC = () => {
             </div>
 
             {/* Quality Hint Box */}
-            <div className={`mb-6 rounded-2xl border p-4 ${qualityInfo.color}`}>
+            <div className={`rounded-2xl border p-4 ${qualityInfo.color}`}>
               <div className="flex items-start gap-2.5">
                 <Info className="mt-0.5 h-4 w-4 shrink-0" />
                 <div>
                   <p className="text-xs font-bold">{qualityInfo.label}</p>
                   <p className="mt-0.5 text-xs opacity-90">{qualityInfo.desc}</p>
                 </div>
-              </div>
-            </div>
-
-            {/* Advanced Compression Engine Mode */}
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 dark:border-slate-800 dark:bg-slate-800/40">
-              <span className="mb-2 block text-xs font-bold text-slate-700 dark:text-slate-300">
-                รูปแบบการบีบอัด (Engine Mode)
-              </span>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <label
-                  className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${
-                    engineMode === 'smart'
-                      ? 'border-amber-500 bg-white shadow-xs dark:bg-slate-900'
-                      : 'border-transparent bg-transparent hover:bg-white/60 dark:hover:bg-slate-800/60'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="engineMode"
-                    checked={engineMode === 'smart'}
-                    onChange={() => setEngineMode('smart')}
-                    className="mt-1 accent-amber-600"
-                  />
-                  <div>
-                    <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                      ⚡ โหมดบีบอัดอัจฉริยะ (Smart Visual Mode) [แนะนำ 100%]
-                    </p>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      บีบอัดรูปภาพและเอกสารสแกนตามแถบเลื่อน ได้ขนาดเล็กลงตามเป้าหมายจริงแน่นอน
-                    </p>
-                  </div>
-                </label>
-
-                <label
-                  className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition ${
-                    engineMode === 'lossless'
-                      ? 'border-amber-500 bg-white shadow-xs dark:bg-slate-900'
-                      : 'border-transparent bg-transparent hover:bg-white/60 dark:hover:bg-slate-800/60'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="engineMode"
-                    checked={engineMode === 'lossless'}
-                    onChange={() => setEngineMode('lossless')}
-                    className="mt-1 accent-amber-600"
-                  />
-                  <div>
-                    <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                      📄 โหมดโครงสร้างดั้งเดิม (Lossless Stream)
-                    </p>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      บีบอัดเฉพาะโครงสร้าง Object Stream (หากเป็นเอกสารสแกน แนะนำให้ใช้โหมดอัจฉริยะด้านซ้าย)
-                    </p>
-                  </div>
-                </label>
               </div>
             </div>
           </div>
