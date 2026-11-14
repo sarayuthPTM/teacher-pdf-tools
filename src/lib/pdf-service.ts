@@ -210,29 +210,71 @@ export async function splitPDF(file: File, pageIndices: number[]): Promise<Blob>
   return new Blob([newBytes as any], { type: 'application/pdf' });
 }
 
+export type SplitFormat = 'pdf' | 'jpeg' | 'png';
+
 /**
- * Split PDF - Each selected page as a separate PDF file inside a ZIP archive
+ * Split PDF - Each selected page as a separate PDF or JPG/PNG image file inside a ZIP archive
  */
 export async function splitPdfToZip(
   file: File,
   pageIndices: number[],
+  format: SplitFormat = 'pdf',
   onProgress?: (current: number, total: number) => void
 ): Promise<Blob> {
   const arrayBuffer = await file.arrayBuffer();
-  const pdf = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
   const baseName = file.name.replace(/\.pdf$/i, '');
   const zip = new JSZip();
 
-  for (let i = 0; i < pageIndices.length; i++) {
-    const pageIndex = pageIndices[i];
-    const singlePdf = await PDFDocument.create();
-    const [copiedPage] = await singlePdf.copyPages(pdf, [pageIndex]);
-    singlePdf.addPage(copiedPage);
-    const pdfBytes = await singlePdf.save({ useObjectStreams: true });
+  if (format === 'pdf') {
+    const pdf = await PDFDocument.load(arrayBuffer.slice(0), { ignoreEncryption: true });
 
-    const pageNum = pageIndex + 1;
-    zip.file(`${baseName}_หน้า_${pageNum}.pdf`, pdfBytes);
-    if (onProgress) onProgress(i + 1, pageIndices.length);
+    for (let i = 0; i < pageIndices.length; i++) {
+      const pageIndex = pageIndices[i];
+      const singlePdf = await PDFDocument.create();
+      const [copiedPage] = await singlePdf.copyPages(pdf, [pageIndex]);
+      singlePdf.addPage(copiedPage);
+      const pdfBytes = await singlePdf.save({ useObjectStreams: true });
+
+      const pageNum = pageIndex + 1;
+      zip.file(`${baseName}_หน้า_${pageNum}.pdf`, pdfBytes);
+      if (onProgress) onProgress(i + 1, pageIndices.length);
+    }
+  } else {
+    const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
+    const isJpeg = format === 'jpeg';
+    const ext = isJpeg ? 'jpg' : 'png';
+    const mime = isJpeg ? 'image/jpeg' : 'image/png';
+    const quality = 0.92;
+    const scale = 2.0;
+
+    for (let i = 0; i < pageIndices.length; i++) {
+      const pageIndex = pageIndices[i];
+      const pageNum = pageIndex + 1;
+      const page = await pdfDoc.getPage(pageNum);
+      const viewport = page.getViewport({ scale });
+
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.floor(viewport.width));
+      canvas.height = Math.max(1, Math.floor(viewport.height));
+      const ctx = canvas.getContext('2d');
+
+      if (ctx) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        await page.render({ canvasContext: ctx, viewport }).promise;
+
+        const dataUrl = canvas.toDataURL(mime, quality);
+        canvas.width = 0;
+        canvas.height = 0;
+
+        const base64Data = dataUrl.split(',')[1];
+        zip.file(`${baseName}_หน้า_${pageNum}.${ext}`, base64Data, { base64: true });
+      }
+
+      if (onProgress) onProgress(i + 1, pageIndices.length);
+      await new Promise((r) => setTimeout(r, 10));
+    }
   }
 
   return await zip.generateAsync({
@@ -253,23 +295,70 @@ export interface PageRangeGroup {
 export async function splitPdfRangesToZip(
   file: File,
   rangeGroups: PageRangeGroup[],
+  format: SplitFormat = 'pdf',
   onProgress?: (current: number, total: number) => void
 ): Promise<Blob> {
   const arrayBuffer = await file.arrayBuffer();
-  const pdf = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
   const baseName = file.name.replace(/\.pdf$/i, '');
   const zip = new JSZip();
 
-  for (let i = 0; i < rangeGroups.length; i++) {
-    const group = rangeGroups[i];
-    if (group.pageIndices.length === 0) continue;
-    const groupPdf = await PDFDocument.create();
-    const copiedPages = await groupPdf.copyPages(pdf, group.pageIndices);
-    copiedPages.forEach((p) => groupPdf.addPage(p));
-    const pdfBytes = await groupPdf.save({ useObjectStreams: true });
+  if (format === 'pdf') {
+    const pdf = await PDFDocument.load(arrayBuffer.slice(0), { ignoreEncryption: true });
 
-    zip.file(`${baseName}_${group.name}.pdf`, pdfBytes);
-    if (onProgress) onProgress(i + 1, rangeGroups.length);
+    for (let i = 0; i < rangeGroups.length; i++) {
+      const group = rangeGroups[i];
+      if (group.pageIndices.length === 0) continue;
+      const groupPdf = await PDFDocument.create();
+      const copiedPages = await groupPdf.copyPages(pdf, group.pageIndices);
+      copiedPages.forEach((p) => groupPdf.addPage(p));
+      const pdfBytes = await groupPdf.save({ useObjectStreams: true });
+
+      zip.file(`${baseName}_${group.name}.pdf`, pdfBytes);
+      if (onProgress) onProgress(i + 1, rangeGroups.length);
+    }
+  } else {
+    const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
+    const isJpeg = format === 'jpeg';
+    const ext = isJpeg ? 'jpg' : 'png';
+    const mime = isJpeg ? 'image/jpeg' : 'image/png';
+    const quality = 0.92;
+    const scale = 2.0;
+
+    let totalPagesToProcess = 0;
+    rangeGroups.forEach((g) => (totalPagesToProcess += g.pageIndices.length));
+    let processedCount = 0;
+
+    for (let g = 0; g < rangeGroups.length; g++) {
+      const group = rangeGroups[g];
+      for (const pageIndex of group.pageIndices) {
+        const pageNum = pageIndex + 1;
+        const page = await pdfDoc.getPage(pageNum);
+        const viewport = page.getViewport({ scale });
+
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.floor(viewport.width));
+        canvas.height = Math.max(1, Math.floor(viewport.height));
+        const ctx = canvas.getContext('2d');
+
+        if (ctx) {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+          await page.render({ canvasContext: ctx, viewport }).promise;
+
+          const dataUrl = canvas.toDataURL(mime, quality);
+          canvas.width = 0;
+          canvas.height = 0;
+
+          const base64Data = dataUrl.split(',')[1];
+          zip.file(`${baseName}_${group.name}_หน้า_${pageNum}.${ext}`, base64Data, { base64: true });
+        }
+
+        processedCount++;
+        if (onProgress) onProgress(processedCount, totalPagesToProcess);
+        await new Promise((r) => setTimeout(r, 10));
+      }
+    }
   }
 
   return await zip.generateAsync({

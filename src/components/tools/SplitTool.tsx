@@ -12,6 +12,8 @@ import {
   RefreshCw,
   Layers,
   Sparkles,
+  Image as ImageIcon,
+  FileType,
 } from 'lucide-react';
 import { FileDropzone } from '../ui/FileDropzone';
 import {
@@ -19,6 +21,7 @@ import {
   splitPDF,
   splitPdfToZip,
   splitPdfRangesToZip,
+  SplitFormat,
   PageRangeGroup,
   downloadBlob,
 } from '../../lib/pdf-service';
@@ -30,6 +33,7 @@ interface SplitResult {
   fileCount: number;
   size: number;
   type: 'zip' | 'pdf';
+  formatLabel: string;
 }
 
 function parseRangeGroups(rangeStr: string, maxPages: number): PageRangeGroup[] {
@@ -81,6 +85,7 @@ export const SplitTool: React.FC = () => {
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
   const [rangeInput, setRangeInput] = useState('');
   const [splitMode, setSplitMode] = useState<'zip-all' | 'single-pdf' | 'zip-ranges'>('zip-all');
+  const [outputFormat, setOutputFormat] = useState<SplitFormat>('pdf');
   const [isDone, setIsDone] = useState(false);
   const [result, setResult] = useState<SplitResult | null>(null);
 
@@ -186,14 +191,15 @@ export const SplitTool: React.FC = () => {
       setProgress({ current: 0, total: selectedIndices.length });
 
       const baseName = file.name.replace(/\.pdf$/i, '');
+      const formatTag = outputFormat === 'pdf' ? '' : `_${outputFormat.toUpperCase()}`;
 
       if (splitMode === 'zip-all') {
-        // Mode 1: Split every page into individual PDFs inside a ZIP
-        const zipBlob = await splitPdfToZip(file, selectedIndices, (current, total) => {
+        // Mode 1: Split every page into individual PDF or JPG/PNG files inside a ZIP
+        const zipBlob = await splitPdfToZip(file, selectedIndices, outputFormat, (current, total) => {
           setProgress({ current, total });
         });
 
-        const fileName = `${baseName}_แยกหน้า.zip`;
+        const fileName = `${baseName}_แยกหน้า${formatTag}.zip`;
         const downloadUrl = URL.createObjectURL(zipBlob);
         setResult({
           fileName,
@@ -202,6 +208,7 @@ export const SplitTool: React.FC = () => {
           fileCount: selectedIndices.length,
           size: zipBlob.size,
           type: 'zip',
+          formatLabel: outputFormat.toUpperCase(),
         });
         setIsDone(true);
         downloadBlob(zipBlob, fileName);
@@ -215,11 +222,11 @@ export const SplitTool: React.FC = () => {
         }
 
         setProgress({ current: 0, total: groups.length });
-        const zipBlob = await splitPdfRangesToZip(file, groups, (current, total) => {
+        const zipBlob = await splitPdfRangesToZip(file, groups, outputFormat, (current, total) => {
           setProgress({ current, total });
         });
 
-        const fileName = `${baseName}_แยกตามช่วง.zip`;
+        const fileName = `${baseName}_แยกตามช่วง${formatTag}.zip`;
         const downloadUrl = URL.createObjectURL(zipBlob);
         setResult({
           fileName,
@@ -228,11 +235,12 @@ export const SplitTool: React.FC = () => {
           fileCount: groups.length,
           size: zipBlob.size,
           type: 'zip',
+          formatLabel: outputFormat.toUpperCase(),
         });
         setIsDone(true);
         downloadBlob(zipBlob, fileName);
       } else {
-        // Mode 3: Merge selected pages into a single new PDF
+        // Mode 3: Merge selected pages into a single new PDF (only for PDF format)
         const splitBlob = await splitPDF(file, selectedIndices);
         const fileName = `${baseName}_หน้าที่เลือก_${selectedIndices.length}หน้า.pdf`;
         const downloadUrl = URL.createObjectURL(splitBlob);
@@ -243,6 +251,7 @@ export const SplitTool: React.FC = () => {
           fileCount: 1,
           size: splitBlob.size,
           type: 'pdf',
+          formatLabel: 'PDF',
         });
         setIsDone(true);
         downloadBlob(splitBlob, fileName);
@@ -269,7 +278,7 @@ export const SplitTool: React.FC = () => {
           แยกไฟล์ PDF (Split PDF)
         </h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          แยกทุกหน้าออกเป็นไฟล์ PDF เดี่ยวๆ ดาวน์โหลดเป็นไฟล์ .ZIP หรือดึงเฉพาะหน้าที่ต้องการได้ทันที
+          แยกทุกหน้าออกเป็นไฟล์ PDF หรือรูปภาพ JPG / PNG เดี่ยวๆ ดาวน์โหลดเป็นไฟล์ .ZIP ได้ทันที
         </p>
       </div>
 
@@ -321,12 +330,102 @@ export const SplitTool: React.FC = () => {
             </button>
           </div>
 
+          {/* Output Format Selector: PDF vs JPG vs PNG */}
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft dark:border-slate-800 dark:bg-slate-900">
+            <label className="mb-3 block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+              1. เลือกรูปแบบไฟล์ที่ต้องการหลังจากแยกหน้า (Output Format)
+            </label>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {/* Option PDF */}
+              <button
+                type="button"
+                onClick={() => {
+                  setOutputFormat('pdf');
+                }}
+                className={`flex items-center gap-3 rounded-2xl border p-4 text-left transition ${
+                  outputFormat === 'pdf'
+                    ? 'border-teal-500 bg-teal-50 ring-2 ring-teal-500/20 dark:border-teal-400 dark:bg-teal-950/40'
+                    : 'border-slate-200 bg-slate-50/50 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50'
+                }`}
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-100 text-red-600 dark:bg-red-950/60 dark:text-red-400">
+                  <FileType className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-slate-900 dark:text-white">
+                    📄 ไฟล์ PDF เหมือนเดิม
+                  </p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    แยกเป็นเอกสาร PDF (.pdf) คมชัด คงรูปแบบเดิม
+                  </p>
+                </div>
+              </button>
+
+              {/* Option JPG */}
+              <button
+                type="button"
+                onClick={() => {
+                  setOutputFormat('jpeg');
+                  if (splitMode === 'single-pdf') setSplitMode('zip-all');
+                }}
+                className={`flex items-center gap-3 rounded-2xl border p-4 text-left transition ${
+                  outputFormat === 'jpeg'
+                    ? 'border-teal-500 bg-teal-50 ring-2 ring-teal-500/20 dark:border-teal-400 dark:bg-teal-950/40'
+                    : 'border-slate-200 bg-slate-50/50 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50'
+                }`}
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400">
+                  <ImageIcon className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">
+                      🖼️ รูปภาพ JPG
+                    </p>
+                    <span className="rounded-full bg-amber-100 px-1.5 py-0.2 text-[10px] font-bold text-amber-800 dark:bg-amber-900/60 dark:text-amber-300">
+                      ยอดนิยม
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    แปลงแต่ละหน้าเป็นรูปภาพ JPG ความคมชัดสูง HD
+                  </p>
+                </div>
+              </button>
+
+              {/* Option PNG */}
+              <button
+                type="button"
+                onClick={() => {
+                  setOutputFormat('png');
+                  if (splitMode === 'single-pdf') setSplitMode('zip-all');
+                }}
+                className={`flex items-center gap-3 rounded-2xl border p-4 text-left transition ${
+                  outputFormat === 'png'
+                    ? 'border-teal-500 bg-teal-50 ring-2 ring-teal-500/20 dark:border-teal-400 dark:bg-teal-950/40'
+                    : 'border-slate-200 bg-slate-50/50 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50'
+                }`}
+              >
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-100 text-blue-600 dark:bg-blue-950/60 dark:text-blue-400">
+                  <Sparkles className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-slate-900 dark:text-white">
+                    🎨 รูปภาพ PNG
+                  </p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    แปลงแต่ละหน้าเป็นรูปภาพ PNG คมกริบ ไร้การบีบอัด
+                  </p>
+                </div>
+              </button>
+            </div>
+          </div>
+
           {/* Split Mode Selector Cards */}
           <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft dark:border-slate-800 dark:bg-slate-900">
             <label className="mb-3 block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
-              เลือกรูปแบบการแยกไฟล์ (Split Mode)
+              2. เลือกรูปแบบการจัดกลุ่ม (Split Mode)
             </label>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div className={`grid grid-cols-1 gap-3 ${outputFormat === 'pdf' ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
               {/* Option 1: ZIP all individual pages (Recommended by user) */}
               <button
                 type="button"
@@ -342,7 +441,7 @@ export const SplitTool: React.FC = () => {
                     <div className="flex items-center gap-2">
                       <Archive className="h-5 w-5 text-teal-600 dark:text-teal-400" />
                       <p className="text-sm font-bold text-slate-900 dark:text-white">
-                        แยก 1 หน้า ต่อ 1 ไฟล์ (.ZIP)
+                        แยก 1 หน้า ต่อ 1 ไฟล์ ({outputFormat.toUpperCase()}) ใน ZIP
                       </p>
                     </div>
                     <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-bold text-teal-800 dark:bg-teal-900/60 dark:text-teal-300">
@@ -350,11 +449,11 @@ export const SplitTool: React.FC = () => {
                     </span>
                   </div>
                   <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                    แยกทุกหน้าที่เลือกเป็นไฟล์ PDF แต่ละหน้าเดี่ยวๆ (เช่น หน้า_1.pdf, หน้า_2.pdf) บรรจุในไฟล์ .ZIP
+                    แยกทุกหน้าที่เลือกเป็นไฟล์ {outputFormat.toUpperCase()} เดี่ยวๆ 1 หน้า ต่อ 1 ไฟล์ (เช่น หน้า_1.{outputFormat === 'jpeg' ? 'jpg' : outputFormat}) บรรจุในไฟล์ .ZIP
                   </p>
                 </div>
                 <div className="mt-3 pt-2 border-t border-teal-200/50 dark:border-teal-900/40 text-[11px] font-semibold text-teal-700 dark:text-teal-300">
-                  📦 จะได้ไฟล์ ZIP บรรจุ {selectedCount} ไฟล์ PDF
+                  📦 จะได้ไฟล์ ZIP บรรจุ {selectedCount} ไฟล์ {outputFormat.toUpperCase()}
                 </div>
               </button>
 
@@ -372,7 +471,7 @@ export const SplitTool: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <Scissors className="h-5 w-5 text-teal-600 dark:text-teal-400" />
                     <p className="text-sm font-bold text-slate-900 dark:text-white">
-                      แยกตามช่วงหน้า (.ZIP)
+                      แยกตามช่วงหน้า ({outputFormat.toUpperCase()}) ใน ZIP
                     </p>
                   </div>
                   <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
@@ -380,35 +479,37 @@ export const SplitTool: React.FC = () => {
                   </p>
                 </div>
                 <div className="mt-3 pt-2 border-t border-teal-200/50 dark:border-teal-900/40 text-[11px] font-semibold text-teal-700 dark:text-teal-300">
-                  ✂️ จะได้ไฟล์ ZIP บรรจุ {rangeGroupsCount || 1} ช่วง PDF
+                  ✂️ จะได้ไฟล์ ZIP บรรจุ {rangeGroupsCount || 1} ช่วง {outputFormat.toUpperCase()}
                 </div>
               </button>
 
-              {/* Option 3: Merge selected to single PDF */}
-              <button
-                type="button"
-                onClick={() => setSplitMode('single-pdf')}
-                className={`flex flex-col justify-between rounded-2xl border p-4 text-left transition ${
-                  splitMode === 'single-pdf'
-                    ? 'border-teal-500 bg-teal-50 ring-2 ring-teal-500/20 dark:border-teal-400 dark:bg-teal-950/40'
+              {/* Option 3: Merge selected to single PDF (only when format is PDF) */}
+              {outputFormat === 'pdf' && (
+                <button
+                  type="button"
+                  onClick={() => setSplitMode('single-pdf')}
+                  className={`flex flex-col justify-between rounded-2xl border p-4 text-left transition ${
+                    splitMode === 'single-pdf'
+                      ? 'border-teal-500 bg-teal-50 ring-2 ring-teal-500/20 dark:border-teal-400 dark:bg-teal-950/40'
                     : 'border-slate-200 bg-slate-50/50 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center gap-2">
-                    <Files className="h-5 w-5 text-teal-600 dark:text-teal-400" />
-                    <p className="text-sm font-bold text-slate-900 dark:text-white">
-                      รวมหน้าที่เลือกเป็น 1 ไฟล์ PDF
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Files className="h-5 w-5 text-teal-600 dark:text-teal-400" />
+                      <p className="text-sm font-bold text-slate-900 dark:text-white">
+                        รวมหน้าที่เลือกเป็น 1 ไฟล์ PDF
+                      </p>
+                    </div>
+                    <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                      ดึงเฉพาะหน้าที่เลือกมารวมเป็นเอกสาร PDF ใหม่เพียงไฟล์เดียว (เช่น ดึงเฉพาะหน้า 1, 3, 5)
                     </p>
                   </div>
-                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                    ดึงเฉพาะหน้าที่เลือกมารวมเป็นเอกสาร PDF ใหม่เพียงไฟล์เดียว (เช่น ดึงเฉพาะหน้า 1, 3, 5)
-                  </p>
-                </div>
-                <div className="mt-3 pt-2 border-t border-teal-200/50 dark:border-teal-900/40 text-[11px] font-semibold text-teal-700 dark:text-teal-300">
-                  📄 รวมหน้าที่เลือก {selectedCount} หน้า เป็น 1 PDF
-                </div>
-              </button>
+                  <div className="mt-3 pt-2 border-t border-teal-200/50 dark:border-teal-900/40 text-[11px] font-semibold text-teal-700 dark:text-teal-300">
+                    📄 รวมหน้าที่เลือก {selectedCount} หน้า เป็น 1 PDF
+                  </div>
+                </button>
+              )}
             </div>
           </div>
 
@@ -517,7 +618,7 @@ export const SplitTool: React.FC = () => {
               <div className="mb-2 flex items-center justify-between text-xs font-bold text-teal-800 dark:text-teal-300">
                 <span className="flex items-center gap-2">
                   <Loader2 className="h-4 w-4 animate-spin text-teal-600" />
-                  กำลังแยกหน้าเอกสาร PDF และบรรจุลงในไฟล์ ZIP...
+                  กำลังแยกหน้าเป็น {outputFormat.toUpperCase()} และบรรจุลงในไฟล์ ZIP...
                 </span>
                 <span>
                   {progress.current} / {progress.total} (
@@ -544,7 +645,7 @@ export const SplitTool: React.FC = () => {
                 </div>
                 <div>
                   <h4 className="text-base font-bold text-emerald-900 dark:text-emerald-100">
-                    🎉 แยกไฟล์ PDF สำเร็จเรียบร้อย!
+                    🎉 แยกหน้าเป็น {result.formatLabel} สำเร็จเรียบร้อย!
                   </h4>
                   <p className="text-xs text-emerald-700 dark:text-emerald-300">
                     ระบบได้ดาวน์โหลดไฟล์ให้คุณอัตโนมัติแล้ว หรือสามารถคลิกปุ่มดาวน์โหลดด้านล่างได้ทันที
@@ -564,7 +665,7 @@ export const SplitTool: React.FC = () => {
                     จำนวนไฟล์ที่ได้
                   </p>
                   <p className="mt-1 text-base font-extrabold text-emerald-600 dark:text-emerald-400">
-                    {result.fileCount} {result.type === 'zip' ? 'ไฟล์ PDF' : 'หน้า'}
+                    {result.fileCount} ไฟล์ ({result.formatLabel})
                   </p>
                 </div>
                 <div>
@@ -612,17 +713,17 @@ export const SplitTool: React.FC = () => {
                 {isProcessing ? (
                   <>
                     <Loader2 className="h-5 w-5 animate-spin" />
-                    กำลังแยกไฟล์ PDF...
+                    กำลังแยกไฟล์ PDF เป็น {outputFormat.toUpperCase()}...
                   </>
                 ) : splitMode === 'zip-all' ? (
                   <>
                     <Archive className="h-5 w-5" />
-                    แยกและดาวน์โหลดเป็นไฟล์ .ZIP ({selectedCount} ไฟล์ PDF)
+                    แยกเป็น {outputFormat.toUpperCase()} ดาวน์โหลดเป็นไฟล์ .ZIP ({selectedCount} ไฟล์)
                   </>
                 ) : splitMode === 'zip-ranges' ? (
                   <>
                     <Scissors className="h-5 w-5" />
-                    แยกตามช่วงและดาวน์โหลดเป็นไฟล์ .ZIP ({rangeGroupsCount || 1} ช่วง PDF)
+                    แยกตามช่วงเป็น {outputFormat.toUpperCase()} ดาวน์โหลดเป็นไฟล์ .ZIP ({rangeGroupsCount || 1} ช่วง)
                   </>
                 ) : (
                   <>

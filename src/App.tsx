@@ -185,8 +185,8 @@ const allToolsDefinition: ToolDefinition[] = [
   },
   {
     id: 'split',
-    title: 'แยกไฟล์ PDF',
-    description: 'ดึงเฉพาะหน้าที่ต้องการออกมาเป็นไฟล์ใหม่',
+    title: 'แยกไฟล์ PDF (Split PDF)',
+    description: 'แยกหน้า PDF เป็นไฟล์เดี่ยวหรือรูปภาพ JPG/PNG บรรจุในไฟล์ ZIP โหลดใช้งานได้ทันที',
     icon: Scissors,
     gradientFrom: 'from-teal-100/90 dark:from-teal-950/40',
     gradientTo: 'to-teal-50/70 dark:to-teal-900/20',
@@ -195,6 +195,8 @@ const allToolsDefinition: ToolDefinition[] = [
     iconBgFrom: 'from-teal-500',
     iconBgTo: 'to-emerald-600',
     iconColor: 'text-teal-500',
+    badge: 'แยก PDF / JPG 📦',
+    badgeColor: 'bg-teal-100 text-teal-700 dark:bg-teal-900/60 dark:text-teal-300',
     category: 'pdf',
   },
   {
