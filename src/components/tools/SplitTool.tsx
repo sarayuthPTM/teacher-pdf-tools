@@ -1,7 +1,75 @@
-import React, { useState } from 'react';
-import { Scissors, Download, Loader2, FileText, CheckSquare, Square } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import {
+  Scissors,
+  Download,
+  Loader2,
+  FileText,
+  CheckSquare,
+  Square,
+  Archive,
+  Files,
+  CheckCircle2,
+  RefreshCw,
+  Layers,
+  Sparkles,
+} from 'lucide-react';
 import { FileDropzone } from '../ui/FileDropzone';
-import { renderPdfThumbnails, splitPDF, downloadBlob } from '../../lib/pdf-service';
+import {
+  renderPdfThumbnails,
+  splitPDF,
+  splitPdfToZip,
+  splitPdfRangesToZip,
+  PageRangeGroup,
+  downloadBlob,
+} from '../../lib/pdf-service';
+
+interface SplitResult {
+  fileName: string;
+  blob: Blob;
+  downloadUrl: string;
+  fileCount: number;
+  size: number;
+  type: 'zip' | 'pdf';
+}
+
+function parseRangeGroups(rangeStr: string, maxPages: number): PageRangeGroup[] {
+  if (!rangeStr.trim()) return [];
+  const parts = rangeStr.split(',');
+  const groups: PageRangeGroup[] = [];
+
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+
+    if (trimmed.includes('-')) {
+      const [startStr, endStr] = trimmed.split('-');
+      const start = parseInt(startStr, 10);
+      const end = parseInt(endStr, 10);
+      if (!isNaN(start) && !isNaN(end) && start <= end) {
+        const pageIndices: number[] = [];
+        for (let i = Math.max(1, start); i <= Math.min(maxPages, end); i++) {
+          pageIndices.push(i - 1);
+        }
+        if (pageIndices.length > 0) {
+          groups.push({
+            name: `ช่วง_หน้า_${start}-${end}`,
+            pageIndices,
+          });
+        }
+      }
+    } else {
+      const pageNum = parseInt(trimmed, 10);
+      if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= maxPages) {
+        groups.push({
+          name: `หน้า_${pageNum}`,
+          pageIndices: [pageNum - 1],
+        });
+      }
+    }
+  }
+
+  return groups;
+}
 
 export const SplitTool: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
@@ -10,21 +78,37 @@ export const SplitTool: React.FC = () => {
   >([]);
   const [loadingThumbnails, setLoadingThumbnails] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
   const [rangeInput, setRangeInput] = useState('');
+  const [splitMode, setSplitMode] = useState<'zip-all' | 'single-pdf' | 'zip-ranges'>('zip-all');
+  const [isDone, setIsDone] = useState(false);
+  const [result, setResult] = useState<SplitResult | null>(null);
+
+  // Clean up blob URLs when changing file or unmounting
+  useEffect(() => {
+    return () => {
+      if (result?.downloadUrl) {
+        URL.revokeObjectURL(result.downloadUrl);
+      }
+    };
+  }, [result]);
 
   const handleFileSelected = async (files: File[]) => {
     if (files.length === 0) return;
     const selectedFile = files[0];
     setFile(selectedFile);
     setLoadingThumbnails(true);
+    setIsDone(false);
+    setResult(null);
+    setProgress(null);
 
     try {
-      const thumbs = await renderPdfThumbnails(selectedFile, 100);
+      const thumbs = await renderPdfThumbnails(selectedFile, 150);
       setThumbnails(thumbs.map((t) => ({ ...t, selected: true })));
       setRangeInput(`1-${thumbs.length}`);
     } catch (err) {
       console.error(err);
-      alert('ไม่สามารถโหลดเอกสาร PDF ได้');
+      alert('ไม่สามารถโหลดเอกสาร PDF ได้ กรุณาตรวจสอบไฟล์');
     } finally {
       setLoadingThumbnails(false);
     }
@@ -42,6 +126,18 @@ export const SplitTool: React.FC = () => {
 
   const deselectAll = () => {
     setThumbnails((prev) => prev.map((p) => ({ ...p, selected: false })));
+  };
+
+  const selectOddPages = () => {
+    setThumbnails((prev) =>
+      prev.map((p) => ({ ...p, selected: p.pageNumber % 2 !== 0 }))
+    );
+  };
+
+  const selectEvenPages = () => {
+    setThumbnails((prev) =>
+      prev.map((p) => ({ ...p, selected: p.pageNumber % 2 === 0 }))
+    );
   };
 
   const handleApplyRange = () => {
@@ -73,6 +169,7 @@ export const SplitTool: React.FC = () => {
 
   const handleSplit = async () => {
     if (!file) return;
+
     const selectedIndices = thumbnails
       .map((p, index) => (p.selected ? index : -1))
       .filter((idx) => idx !== -1);
@@ -84,18 +181,86 @@ export const SplitTool: React.FC = () => {
 
     try {
       setIsProcessing(true);
-      const splitBlob = await splitPDF(file, selectedIndices);
-      downloadBlob(splitBlob, `extracted_${Date.now()}.pdf`);
+      setIsDone(false);
+      setResult(null);
+      setProgress({ current: 0, total: selectedIndices.length });
+
+      const baseName = file.name.replace(/\.pdf$/i, '');
+
+      if (splitMode === 'zip-all') {
+        // Mode 1: Split every page into individual PDFs inside a ZIP
+        const zipBlob = await splitPdfToZip(file, selectedIndices, (current, total) => {
+          setProgress({ current, total });
+        });
+
+        const fileName = `${baseName}_แยกหน้า.zip`;
+        const downloadUrl = URL.createObjectURL(zipBlob);
+        setResult({
+          fileName,
+          blob: zipBlob,
+          downloadUrl,
+          fileCount: selectedIndices.length,
+          size: zipBlob.size,
+          type: 'zip',
+        });
+        setIsDone(true);
+        downloadBlob(zipBlob, fileName);
+      } else if (splitMode === 'zip-ranges') {
+        // Mode 2: Split according to defined range groups inside a ZIP
+        const groups = parseRangeGroups(rangeInput, thumbnails.length);
+        if (groups.length === 0) {
+          alert('กรุณาระบุช่วงหน้าให้ถูกต้อง เช่น 1-2, 3-5');
+          setIsProcessing(false);
+          return;
+        }
+
+        setProgress({ current: 0, total: groups.length });
+        const zipBlob = await splitPdfRangesToZip(file, groups, (current, total) => {
+          setProgress({ current, total });
+        });
+
+        const fileName = `${baseName}_แยกตามช่วง.zip`;
+        const downloadUrl = URL.createObjectURL(zipBlob);
+        setResult({
+          fileName,
+          blob: zipBlob,
+          downloadUrl,
+          fileCount: groups.length,
+          size: zipBlob.size,
+          type: 'zip',
+        });
+        setIsDone(true);
+        downloadBlob(zipBlob, fileName);
+      } else {
+        // Mode 3: Merge selected pages into a single new PDF
+        const splitBlob = await splitPDF(file, selectedIndices);
+        const fileName = `${baseName}_หน้าที่เลือก_${selectedIndices.length}หน้า.pdf`;
+        const downloadUrl = URL.createObjectURL(splitBlob);
+        setResult({
+          fileName,
+          blob: splitBlob,
+          downloadUrl,
+          fileCount: 1,
+          size: splitBlob.size,
+          type: 'pdf',
+        });
+        setIsDone(true);
+        downloadBlob(splitBlob, fileName);
+      }
     } catch (err) {
-      console.error(err);
-      alert('เกิดข้อผิดพลาดในการแยกไฟล์');
+      console.error('Error splitting PDF:', err);
+      alert('เกิดข้อผิดพลาดในการแยกไฟล์ PDF โปรดลองอีกครั้ง');
     } finally {
       setIsProcessing(false);
+      setProgress(null);
     }
   };
 
+  const selectedCount = thumbnails.filter((p) => p.selected).length;
+  const rangeGroupsCount = parseRangeGroups(rangeInput, thumbnails.length).length;
+
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="mx-auto max-w-5xl font-sans">
       <div className="mb-8 text-center">
         <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-teal-500 to-emerald-600 text-white shadow-md">
           <Scissors className="h-7 w-7" />
@@ -104,7 +269,7 @@ export const SplitTool: React.FC = () => {
           แยกไฟล์ PDF (Split PDF)
         </h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          ดึงเฉพาะหน้าที่ต้องการออกมาเป็นไฟล์ใหม่ เลือกคลิกทีละหน้าหรือพิมพ์ช่วงหน้าได้
+          แยกทุกหน้าออกเป็นไฟล์ PDF เดี่ยวๆ ดาวน์โหลดเป็นไฟล์ .ZIP หรือดึงเฉพาะหน้าที่ต้องการได้ทันที
         </p>
       </div>
 
@@ -118,15 +283,147 @@ export const SplitTool: React.FC = () => {
         />
       ) : (
         <div className="space-y-6">
+          {/* File summary and header */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-soft dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-teal-100 text-teal-700 dark:bg-teal-950/60 dark:text-teal-400">
+                <FileText className="h-5 w-5" />
+              </div>
+              <div>
+                <span className="block text-sm font-bold text-slate-800 dark:text-slate-100">
+                  {file.name}
+                </span>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="inline-block rounded-md bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                    ขนาด: {(file.size / (1024 * 1024)).toFixed(2)} MB
+                  </span>
+                  <span className="inline-flex items-center gap-1 rounded-md bg-teal-50 px-2 py-0.5 text-xs font-semibold text-teal-700 dark:bg-teal-950/50 dark:text-teal-400">
+                    <Layers className="h-3 w-3" />
+                    {thumbnails.length} หน้าทั้งหมด
+                  </span>
+                  <span className="inline-block rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                    เลือกอยู่ {selectedCount} หน้า
+                  </span>
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setFile(null);
+                setThumbnails([]);
+                setIsDone(false);
+                setResult(null);
+              }}
+              className="text-xs font-semibold text-rose-500 transition hover:text-rose-600 hover:underline"
+            >
+              เปลี่ยนไฟล์
+            </button>
+          </div>
+
+          {/* Split Mode Selector Cards */}
+          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft dark:border-slate-800 dark:bg-slate-900">
+            <label className="mb-3 block text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+              เลือกรูปแบบการแยกไฟล์ (Split Mode)
+            </label>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              {/* Option 1: ZIP all individual pages (Recommended by user) */}
+              <button
+                type="button"
+                onClick={() => setSplitMode('zip-all')}
+                className={`flex flex-col justify-between rounded-2xl border p-4 text-left transition ${
+                  splitMode === 'zip-all'
+                    ? 'border-teal-500 bg-teal-50 ring-2 ring-teal-500/20 dark:border-teal-400 dark:bg-teal-950/40'
+                    : 'border-slate-200 bg-slate-50/50 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Archive className="h-5 w-5 text-teal-600 dark:text-teal-400" />
+                      <p className="text-sm font-bold text-slate-900 dark:text-white">
+                        แยก 1 หน้า ต่อ 1 ไฟล์ (.ZIP)
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-bold text-teal-800 dark:bg-teal-900/60 dark:text-teal-300">
+                      แนะนำ
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                    แยกทุกหน้าที่เลือกเป็นไฟล์ PDF แต่ละหน้าเดี่ยวๆ (เช่น หน้า_1.pdf, หน้า_2.pdf) บรรจุในไฟล์ .ZIP
+                  </p>
+                </div>
+                <div className="mt-3 pt-2 border-t border-teal-200/50 dark:border-teal-900/40 text-[11px] font-semibold text-teal-700 dark:text-teal-300">
+                  📦 จะได้ไฟล์ ZIP บรรจุ {selectedCount} ไฟล์ PDF
+                </div>
+              </button>
+
+              {/* Option 2: Split by Ranges into ZIP */}
+              <button
+                type="button"
+                onClick={() => setSplitMode('zip-ranges')}
+                className={`flex flex-col justify-between rounded-2xl border p-4 text-left transition ${
+                  splitMode === 'zip-ranges'
+                    ? 'border-teal-500 bg-teal-50 ring-2 ring-teal-500/20 dark:border-teal-400 dark:bg-teal-950/40'
+                    : 'border-slate-200 bg-slate-50/50 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Scissors className="h-5 w-5 text-teal-600 dark:text-teal-400" />
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">
+                      แยกตามช่วงหน้า (.ZIP)
+                    </p>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                    แยกเป็นกลุ่มช่วงหน้าตามที่พิมพ์ระบุในช่องด้านล่าง (เช่น ช่วง 1-2 และ 3-5) บรรจุในไฟล์ .ZIP
+                  </p>
+                </div>
+                <div className="mt-3 pt-2 border-t border-teal-200/50 dark:border-teal-900/40 text-[11px] font-semibold text-teal-700 dark:text-teal-300">
+                  ✂️ จะได้ไฟล์ ZIP บรรจุ {rangeGroupsCount || 1} ช่วง PDF
+                </div>
+              </button>
+
+              {/* Option 3: Merge selected to single PDF */}
+              <button
+                type="button"
+                onClick={() => setSplitMode('single-pdf')}
+                className={`flex flex-col justify-between rounded-2xl border p-4 text-left transition ${
+                  splitMode === 'single-pdf'
+                    ? 'border-teal-500 bg-teal-50 ring-2 ring-teal-500/20 dark:border-teal-400 dark:bg-teal-950/40'
+                    : 'border-slate-200 bg-slate-50/50 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Files className="h-5 w-5 text-teal-600 dark:text-teal-400" />
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">
+                      รวมหน้าที่เลือกเป็น 1 ไฟล์ PDF
+                    </p>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                    ดึงเฉพาะหน้าที่เลือกมารวมเป็นเอกสาร PDF ใหม่เพียงไฟล์เดียว (เช่น ดึงเฉพาะหน้า 1, 3, 5)
+                  </p>
+                </div>
+                <div className="mt-3 pt-2 border-t border-teal-200/50 dark:border-teal-900/40 text-[11px] font-semibold text-teal-700 dark:text-teal-300">
+                  📄 รวมหน้าที่เลือก {selectedCount} หน้า เป็น 1 PDF
+                </div>
+              </button>
+            </div>
+          </div>
+
           {/* Controls toolbar */}
-          <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-soft dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-soft dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">
+                เลือกช่วงหน้า:
+              </span>
               <input
                 type="text"
                 value={rangeInput}
                 onChange={(e) => setRangeInput(e.target.value)}
-                placeholder="เช่น 1-3, 5, 8-10"
-                className="w-48 rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-medium dark:border-slate-700 dark:bg-slate-800"
+                placeholder="เช่น 1-3, 5 หรือ 1-5"
+                className="w-44 rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 text-xs font-medium focus:border-teal-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               />
               <button
                 type="button"
@@ -137,27 +434,34 @@ export const SplitTool: React.FC = () => {
               </button>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
               <button
                 type="button"
                 onClick={selectAll}
-                className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300"
+                className="rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
               >
                 เลือกทั้งหมด
               </button>
               <button
                 type="button"
                 onClick={deselectAll}
-                className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300"
+                className="rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
               >
                 ยกเลิกทั้งหมด
               </button>
               <button
                 type="button"
-                onClick={() => setFile(null)}
-                className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 dark:border-rose-900/50 dark:text-rose-400"
+                onClick={selectOddPages}
+                className="rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
               >
-                เปลี่ยนไฟล์
+                หน้าคี่
+              </button>
+              <button
+                type="button"
+                onClick={selectEvenPages}
+                className="rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+              >
+                หน้าคู่
               </button>
             </div>
           </div>
@@ -166,7 +470,7 @@ export const SplitTool: React.FC = () => {
           {loadingThumbnails ? (
             <div className="flex flex-col items-center justify-center p-12 text-slate-500">
               <Loader2 className="h-8 w-8 animate-spin text-teal-600" />
-              <p className="mt-3 text-sm">กำลังเรนเดอร์หน้าเอกสารตัวอย่าง...</p>
+              <p className="mt-3 text-sm font-semibold">กำลังสร้างรูปตัวอย่างหน้าเอกสาร...</p>
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
@@ -176,11 +480,11 @@ export const SplitTool: React.FC = () => {
                   onClick={() => togglePage(idx)}
                   className={`group relative cursor-pointer overflow-hidden rounded-2xl border-2 p-2 transition-all hover:scale-102 ${
                     t.selected
-                      ? 'border-teal-500 bg-teal-50/50 shadow-md dark:border-teal-400 dark:bg-teal-950/30'
+                      ? 'border-teal-500 bg-teal-50/50 shadow-md ring-2 ring-teal-500/20 dark:border-teal-400 dark:bg-teal-950/30'
                       : 'border-slate-200 bg-white opacity-60 hover:opacity-100 dark:border-slate-800 dark:bg-slate-900'
                   }`}
                 >
-                  <div className="absolute right-3 top-3 z-10">
+                  <div className="absolute right-3 top-3 z-10 rounded-md bg-white/90 p-0.5 shadow-xs backdrop-blur-xs dark:bg-slate-900/90">
                     {t.selected ? (
                       <CheckSquare className="h-5 w-5 text-teal-600 dark:text-teal-400" />
                     ) : (
@@ -192,35 +496,143 @@ export const SplitTool: React.FC = () => {
                     alt={`Page ${t.pageNumber}`}
                     className="w-full rounded-lg shadow-sm"
                   />
-                  <p className="mt-2 text-center text-xs font-bold text-slate-700 dark:text-slate-300">
-                    หน้า {t.pageNumber}
-                  </p>
+                  <div className="mt-2 flex items-center justify-center gap-1.5">
+                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                      หน้า {t.pageNumber}
+                    </span>
+                    {t.selected && (
+                      <span className="rounded-full bg-teal-100 px-1.5 py-0.2 text-[10px] font-bold text-teal-800 dark:bg-teal-900/60 dark:text-teal-300">
+                        เลือก
+                      </span>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
           )}
 
+          {/* Progress bar */}
+          {isProcessing && progress && (
+            <div className="rounded-2xl border border-teal-200 bg-teal-50/80 p-5 shadow-soft dark:border-teal-900/50 dark:bg-teal-950/30">
+              <div className="mb-2 flex items-center justify-between text-xs font-bold text-teal-800 dark:text-teal-300">
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-teal-600" />
+                  กำลังแยกหน้าเอกสาร PDF และบรรจุลงในไฟล์ ZIP...
+                </span>
+                <span>
+                  {progress.current} / {progress.total} (
+                  {Math.round((progress.current / progress.total) * 100)}%)
+                </span>
+              </div>
+              <div className="h-3 w-full overflow-hidden rounded-full bg-teal-200/60 dark:bg-teal-900/50">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-teal-500 to-emerald-500 transition-all duration-200"
+                  style={{
+                    width: `${Math.round((progress.current / progress.total) * 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Result Card */}
+          {isDone && result && (
+            <div className="rounded-3xl border border-emerald-200 bg-emerald-50/60 p-6 shadow-soft dark:border-emerald-900/50 dark:bg-emerald-950/20">
+              <div className="mb-4 flex items-center gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-500 text-white shadow-sm">
+                  <CheckCircle2 className="h-6 w-6" />
+                </div>
+                <div>
+                  <h4 className="text-base font-bold text-emerald-900 dark:text-emerald-100">
+                    🎉 แยกไฟล์ PDF สำเร็จเรียบร้อย!
+                  </h4>
+                  <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                    ระบบได้ดาวน์โหลดไฟล์ให้คุณอัตโนมัติแล้ว หรือสามารถคลิกปุ่มดาวน์โหลดด้านล่างได้ทันที
+                  </p>
+                </div>
+              </div>
+
+              <div className="mb-5 grid grid-cols-3 gap-3 rounded-2xl bg-white p-4 text-center shadow-xs dark:bg-slate-900">
+                <div>
+                  <p className="text-xs font-medium text-slate-400">ชื่อไฟล์</p>
+                  <p className="mt-1 truncate text-xs font-bold text-slate-700 dark:text-slate-300" title={result.fileName}>
+                    {result.fileName}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                    จำนวนไฟล์ที่ได้
+                  </p>
+                  <p className="mt-1 text-base font-extrabold text-emerald-600 dark:text-emerald-400">
+                    {result.fileCount} {result.type === 'zip' ? 'ไฟล์ PDF' : 'หน้า'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-slate-400">ขนาดรวม</p>
+                  <p className="mt-1 text-sm font-bold text-slate-700 dark:text-slate-300">
+                    {(result.size / 1024).toFixed(1)} KB
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <a
+                  href={result.downloadUrl}
+                  download={result.fileName}
+                  onClick={() => downloadBlob(result.blob, result.fileName)}
+                  className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-teal-600 to-emerald-600 px-6 py-3 text-sm font-bold text-white shadow-lift transition hover:opacity-95"
+                >
+                  <Download className="h-4 w-4" />
+                  ดาวน์โหลดไฟล์ {result.type === 'zip' ? '.ZIP' : '.PDF'} อีกครั้ง
+                </a>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsDone(false);
+                    setResult(null);
+                  }}
+                  className="flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  แยกไฟล์อื่นเพิ่มเติม
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Action button */}
-          <div className="flex justify-center pt-4">
-            <button
-              type="button"
-              disabled={isProcessing || thumbnails.filter((p) => p.selected).length === 0}
-              onClick={handleSplit}
-              className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-teal-500 to-emerald-600 px-8 py-4 text-base font-bold text-white shadow-lift transition hover:opacity-95 disabled:opacity-50"
-            >
-              {isProcessing ? (
-                <>
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                  กำลังแยกหน้า...
-                </>
-              ) : (
-                <>
-                  <Download className="h-5 w-5" />
-                  ดาวน์โหลดหน้าที่เลือก ({thumbnails.filter((p) => p.selected).length} หน้า)
-                </>
-              )}
-            </button>
-          </div>
+          {!isDone && (
+            <div className="flex justify-center pt-2">
+              <button
+                type="button"
+                disabled={isProcessing || selectedCount === 0}
+                onClick={handleSplit}
+                className="flex items-center gap-2.5 rounded-2xl bg-gradient-to-r from-teal-500 to-emerald-600 px-8 py-4 text-base font-bold text-white shadow-lift transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isProcessing ? (
+                  <>
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    กำลังแยกไฟล์ PDF...
+                  </>
+                ) : splitMode === 'zip-all' ? (
+                  <>
+                    <Archive className="h-5 w-5" />
+                    แยกและดาวน์โหลดเป็นไฟล์ .ZIP ({selectedCount} ไฟล์ PDF)
+                  </>
+                ) : splitMode === 'zip-ranges' ? (
+                  <>
+                    <Scissors className="h-5 w-5" />
+                    แยกตามช่วงและดาวน์โหลดเป็นไฟล์ .ZIP ({rangeGroupsCount || 1} ช่วง PDF)
+                  </>
+                ) : (
+                  <>
+                    <Files className="h-5 w-5" />
+                    รวมและดาวน์โหลดเป็น 1 ไฟล์ PDF ({selectedCount} หน้า)
+                  </>
+                )}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

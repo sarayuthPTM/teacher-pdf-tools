@@ -196,7 +196,7 @@ export async function mergePDFs(files: File[]): Promise<Blob> {
 }
 
 /**
- * Split PDF - Extract specific page indices
+ * Split PDF - Extract specific page indices into a single merged PDF
  */
 export async function splitPDF(file: File, pageIndices: number[]): Promise<Blob> {
   const arrayBuffer = await file.arrayBuffer();
@@ -208,6 +208,75 @@ export async function splitPDF(file: File, pageIndices: number[]): Promise<Blob>
 
   const newBytes = await newPdf.save();
   return new Blob([newBytes as any], { type: 'application/pdf' });
+}
+
+/**
+ * Split PDF - Each selected page as a separate PDF file inside a ZIP archive
+ */
+export async function splitPdfToZip(
+  file: File,
+  pageIndices: number[],
+  onProgress?: (current: number, total: number) => void
+): Promise<Blob> {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+  const baseName = file.name.replace(/\.pdf$/i, '');
+  const zip = new JSZip();
+
+  for (let i = 0; i < pageIndices.length; i++) {
+    const pageIndex = pageIndices[i];
+    const singlePdf = await PDFDocument.create();
+    const [copiedPage] = await singlePdf.copyPages(pdf, [pageIndex]);
+    singlePdf.addPage(copiedPage);
+    const pdfBytes = await singlePdf.save({ useObjectStreams: true });
+
+    const pageNum = pageIndex + 1;
+    zip.file(`${baseName}_หน้า_${pageNum}.pdf`, pdfBytes);
+    if (onProgress) onProgress(i + 1, pageIndices.length);
+  }
+
+  return await zip.generateAsync({
+    type: 'blob',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  });
+}
+
+/**
+ * Split PDF into Range Groups and package as a ZIP archive
+ */
+export interface PageRangeGroup {
+  name: string;
+  pageIndices: number[];
+}
+
+export async function splitPdfRangesToZip(
+  file: File,
+  rangeGroups: PageRangeGroup[],
+  onProgress?: (current: number, total: number) => void
+): Promise<Blob> {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+  const baseName = file.name.replace(/\.pdf$/i, '');
+  const zip = new JSZip();
+
+  for (let i = 0; i < rangeGroups.length; i++) {
+    const group = rangeGroups[i];
+    if (group.pageIndices.length === 0) continue;
+    const groupPdf = await PDFDocument.create();
+    const copiedPages = await groupPdf.copyPages(pdf, group.pageIndices);
+    copiedPages.forEach((p) => groupPdf.addPage(p));
+    const pdfBytes = await groupPdf.save({ useObjectStreams: true });
+
+    zip.file(`${baseName}_${group.name}.pdf`, pdfBytes);
+    if (onProgress) onProgress(i + 1, rangeGroups.length);
+  }
+
+  return await zip.generateAsync({
+    type: 'blob',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  });
 }
 
 /**
